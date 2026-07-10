@@ -236,6 +236,15 @@ better-sqlite3でread-onlyに開き、行を取得（この段階ではまだ蓄
 
 どちらもプロセス分離の原則を保つ（BIプロセス内で同期処理を走らせない。[要件 §4.3](../requirements.md)）。
 
+### 6.1 CommandRunner（`scripts/sync/commandRunner.ts`）とWindowsでの引数渡し
+
+`GcloudCommandRunner` は `gcloud`（`gcloud.cmd`）解決のため `spawn(..., { shell: true })` を使うが、
+Node は `shell: true` のとき引数配列をエスケープせず空白連結してcmd.exeへ渡す（DEP0190）。
+そのため `--command="mkdir -p '...' && sudo cp ..."` のようにスペースを含む引数は
+cmd.exe側で再分解され、gcloudに渡る前に壊れる。これを避けるため、`buildShellCommandLine(command, args)`
+（純粋関数）で空白等の特殊文字を含む引数のみを自前でダブルクォート囲みし、**単一のコマンドライン文字列**を
+組み立ててから `spawn(commandLine, { shell: true })` する（引数配列は渡さない）。
+
 ---
 
 ## 7. 未同期期間の警告
