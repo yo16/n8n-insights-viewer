@@ -6,6 +6,7 @@
  * テスト・将来のサーバー変更に対応できるようにする。
  */
 
+import os from "os";
 import path from "path";
 
 /** gcloud接続先・リモートパスの設定。 */
@@ -61,3 +62,50 @@ export const LOCAL_ACCUMULATION_DB_PATH = path.join(
   "data",
   "n8n_insights.sqlite",
 );
+
+/**
+ * collect-metricsフェーズ（Phase 5）の設定値。
+ *
+ * docs/design/data-sync-design.md §5 Phase 5 / §3.4 準拠。
+ * 方式D（cronファイル）のリモートパス・想定collectorバージョン・
+ * GCP Monitoring（方式C）の遡り日数を持つ。
+ */
+export interface CollectMetricsConfig {
+  /** VM上のcollector出力ファイルの絶対パス（docs/design/data-sync-design.md §3.1）。 */
+  remoteCollectorFilePath: string;
+  /**
+   * リポジトリ側が想定するcollectorのバージョン識別子。
+   *
+   * **独自判断**: 設計上は `src/shared/collector/version.ts` に置く想定
+   * （§3.4）だが、本タスクの担当領域が `scripts/sync/**` に限定されるため、
+   * ここに定数として保持する（deploy-collector側のバージョンと合わせて
+   * 将来 `src/shared` へ集約することが望ましい）。
+   */
+  expectedCollectorVersion: string;
+  /** collector出力ファイルの取得先ローカル一時パス（取り込み後に削除する）。 */
+  localCollectorTmpPath: string;
+  /**
+   * GCP Monitoring（方式C）から遡って取得する最大日数。
+   * `cpu_metrics` に既存データが無い場合の開始時刻に使う
+   * （要件 §5.1: 過去6週間まで遡れる）。
+   */
+  cpuMetricsLookbackDays: number;
+}
+
+/**
+ * 既定のcollect-metrics設定。環境変数で上書き可能（テスト・運用調整用）。
+ */
+export function getDefaultCollectMetricsConfig(): CollectMetricsConfig {
+  return {
+    remoteCollectorFilePath:
+      process.env.N8N_SYNC_REMOTE_COLLECTOR_FILE ??
+      "/root/insights_collector/metrics.jsonl",
+    expectedCollectorVersion:
+      process.env.N8N_SYNC_COLLECTOR_VERSION ?? "collector-1",
+    localCollectorTmpPath: path.join(
+      os.tmpdir(),
+      "n8n-insights-viewer-collector-metrics.jsonl",
+    ),
+    cpuMetricsLookbackDays: 42,
+  };
+}

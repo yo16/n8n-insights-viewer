@@ -126,7 +126,7 @@ describe("runSync", () => {
     db.close();
   }
 
-  it("fetch→ingestまで成功し、collect-metricsフェーズで失敗として停止する", async () => {
+  it("fetch→ingestまで成功し、collect-metricsも実行してcleanupまで到達する（collect-metricsはFakeCommandRunnerの既定値=空出力・exitCode0で完走する）", async () => {
     writeValidFixtureDb();
     const runner = fakeSuccessfulFetchRunner();
 
@@ -141,9 +141,9 @@ describe("runSync", () => {
       accumulationDbPath,
     });
 
-    expect(result.status).toBe("failed");
-    expect(result.phaseReached).toBe("collect-metrics");
-    expect(result.errorMessage).toMatch(/collect-metrics/);
+    expect(result.status).toBe("success");
+    expect(result.phaseReached).toBe("cleanup");
+    expect(result.errorMessage).toBeUndefined();
     expect(result.rowsIngested).toEqual({
       insights_by_period: 1,
       insights_metadata: 1,
@@ -161,6 +161,59 @@ describe("runSync", () => {
       expect(ingestedExecution.ingestedAt).toEqual(expect.any(String));
     } finally {
       accDb.close();
+    }
+  });
+
+  it("collect-metricsで警告が発生しても、同期全体はsuccessのままcleanupまで到達し、警告はsync_historyに記録される", async () => {
+    writeValidFixtureDb();
+
+    // fetchの4呼び出しに続けて、collect-metricsの1番目(スポット収集)のみ失敗させる。
+    // 以降(oom/scp collector/cpu metrics)はFakeCommandRunnerの既定値(exitCode 0・空stdout)で
+    // 問題なく完走する。
+    const runner = new FakeCommandRunner([
+      { stdout: "", stderr: "", exitCode: 0 }, // snapshot
+      () => {
+        fs.mkdirSync(path.dirname(rawDbPath), { recursive: true });
+        fs.copyFileSync(fixtureDbPath, rawDbPath);
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }, // scp db
+      { stdout: "", stderr: "", exitCode: 0 }, // scp wal
+      { stdout: "", stderr: "", exitCode: 0 }, // cleanup remote tmp
+      { stdout: "", stderr: "ssh connection refused", exitCode: 1 }, // collect-metrics: spot収集が失敗
+    ]);
+
+    const result = await runSync({
+      commandRunner: runner,
+      fetchOptions: {
+        config,
+        localRawDir: path.dirname(rawDbPath),
+        localRawDbPath: rawDbPath,
+        localRawWalPath: rawWalPath,
+      },
+      accumulationDbPath,
+    });
+
+    // ①result.statusはsuccessのまま
+    expect(result.status).toBe("success");
+    // ②phaseReachedは"cleanup"（collect-metricsの警告は同期を失敗させない）
+    expect(result.phaseReached).toBe("cleanup");
+    // ③警告メッセージが記録される
+    expect(result.errorMessage).toMatch(/スポット収集に失敗/);
+
+    const db = new Database(accumulationDbPath, { readonly: true });
+    try {
+      const row = db
+        .prepare(
+          "SELECT status, phase_reached, error_message FROM sync_history ORDER BY id DESC LIMIT 1",
+        )
+        .get() as Record<string, unknown>;
+
+      // ④sync_history.statusはsuccess
+      expect(row.status).toBe("success");
+      expect(row.phase_reached).toBe("cleanup");
+      expect(row.error_message).toMatch(/スポット収集に失敗/);
+    } finally {
+      db.close();
     }
   });
 
@@ -182,7 +235,7 @@ describe("runSync", () => {
     expect(fs.existsSync(rawDbPath)).toBe(false);
   });
 
-  it("sync_historyにfailed/phase_reached=collect-metricsと取り込み件数が記録される", async () => {
+  it("sync_historyにsuccess/phase_reached=cleanupと取り込み件数が記録される", async () => {
     writeValidFixtureDb();
     const runner = fakeSuccessfulFetchRunner();
 
@@ -205,8 +258,8 @@ describe("runSync", () => {
         )
         .get() as Record<string, unknown>;
 
-      expect(row.status).toBe("failed");
-      expect(row.phase_reached).toBe("collect-metrics");
+      expect(row.status).toBe("success");
+      expect(row.phase_reached).toBe("cleanup");
       expect(row.integrity_ok).toBe(1);
       expect(row.schema_ok).toBe(1);
       expect(row.raw_copy_deleted).toBe(1);

@@ -32,19 +32,6 @@ export class ValidateError extends Error {
 }
 
 /**
- * 未実装フェーズ（collect-metrics）に到達した際のエラー。
- * 後続タスク（8k8）で実装が追加されるまでの骨格として使う。
- */
-export class NotImplementedPhaseError extends Error {
-  constructor(public readonly phase: string) {
-    super(
-      `[sync] フェーズ "${phase}" は未実装です（後続タスクで実装されます。docs/design/data-sync-design.md 参照）`,
-    );
-    this.name = "NotImplementedPhaseError";
-  }
-}
-
-/**
  * Phase 3: extract（生コピーからのホワイトリスト抽出・zod検証）失敗時のエラー。
  *
  * 生コピーを開けない場合や、取り込み対象5テーブルの行がzodスキーマの検証に

@@ -6,16 +6,19 @@
  * `sync_history` へ記録する。
  *
  * - extract/ingestはBeadsタスク「shu」で実装済み
- * - collect-metricsは未実装のため、到達した時点で明示的にエラー終了する
- *   骨格のみを用意する（後続タスク「8k8」で実装予定）
+ * - collect-metricsはBeadsタスク「8k8」で実装済み。個別ステップの失敗は
+ *   フェーズ内で警告として吸収され、同期全体を失敗させない
+ *   （docs/design/data-sync-design.md §5 Phase 5）
  * - cleanupは、どのフェーズで失敗しても必ず実行する（try/finally相当。
  *   docs/design/security-design.md §3）
  */
 
-import { NotImplementedPhaseError, ValidateError } from "./errors";
+import { ValidateError } from "./errors";
 import type { CommandRunner } from "./commandRunner";
 import {
   LOCAL_ACCUMULATION_DB_PATH,
+  getDefaultCollectMetricsConfig,
+  type CollectMetricsConfig,
   type GcloudSyncConfig,
 } from "./config";
 import {
@@ -26,7 +29,7 @@ import {
 import { runValidatePhase } from "./phases/validatePhase";
 import { runExtractPhase } from "./phases/extractPhase";
 import { runIngestPhase } from "./phases/ingestPhase";
-import { runNotImplementedPhase } from "./phases/notImplementedPhase";
+import { runCollectMetricsPhase } from "./phases/collectMetricsPhase";
 import { runCleanupPhase } from "./phases/cleanupPhase";
 import { emitResult, logHuman, type ResultStatus, type SyncPhase } from "./progress";
 import {
@@ -41,6 +44,8 @@ export interface RunSyncOptions {
   commandRunner: CommandRunner;
   /** fetchフェーズの設定（gcloud接続先・ローカルパス）。省略時は既定値。 */
   fetchOptions?: FetchPhaseOptions;
+  /** collect-metricsフェーズの設定。省略時は既定値。 */
+  collectMetricsConfig?: CollectMetricsConfig;
   /** 蓄積DBのパス。省略時は既定値（`data/n8n_insights.sqlite`）。 */
   accumulationDbPath?: string;
 }
@@ -56,12 +61,14 @@ export interface SyncRunResult {
 /**
  * 同期CLIの全フェーズを順次実行する。
  *
- * fetch/validate/extract/ingestを実装済みフェーズとして実行し、
- * collect-metricsフェーズで明示的に停止する（後続タスクで実装が
- * 追加されるまでの骨格）。cleanupはどの段階で失敗しても必ず実行する。
+ * fetch/validate/extract/ingest/collect-metricsを実装済みフェーズとして実行する。
+ * collect-metricsの個別失敗は同期全体を失敗させない（警告として記録し継続する）。
+ * cleanupはどの段階で失敗しても必ず実行する。
  */
 export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
   const fetchOptions = options.fetchOptions ?? defaultFetchPhaseOptions();
+  const collectMetricsConfig =
+    options.collectMetricsConfig ?? getDefaultCollectMetricsConfig();
   const accumulationDbPath =
     options.accumulationDbPath ?? LOCAL_ACCUMULATION_DB_PATH;
 
@@ -73,6 +80,7 @@ export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
   let schemaOk: boolean | undefined;
   let errorMessage: string | undefined;
   let rowsIngested: Record<string, number> | undefined;
+  let collectorVersionSeen: string | undefined;
   let status: ResultStatus = "success";
 
   try {
@@ -92,7 +100,23 @@ export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
     rowsIngested = ingestResult.rowsIngested;
 
     phaseReached = "collect-metrics";
-    runNotImplementedPhase("collect-metrics");
+    // collect-metricsは個別ステップの失敗を内部で警告として吸収し、例外を
+    // 投げない設計（docs/design/data-sync-design.md §5 Phase 5）。
+    // 同期本体（DB取り込み）は既に成功しているため、statusは変更しない。
+    const collectMetricsResult = await runCollectMetricsPhase(db, {
+      runner: options.commandRunner,
+      gcloudConfig: fetchOptions.config,
+      collectMetricsConfig,
+    });
+    collectorVersionSeen = collectMetricsResult.collectorVersionSeen;
+    if (collectMetricsResult.warnings.length > 0) {
+      errorMessage = collectMetricsResult.warnings.join(" / ");
+      logHuman(
+        `[sync] collect-metricsで警告がありました（同期自体は継続）: ${errorMessage}`,
+      );
+    }
+
+    phaseReached = "cleanup";
   } catch (err) {
     status = "failed";
     errorMessage = err instanceof Error ? err.message : String(err);
@@ -100,11 +124,6 @@ export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
     if (err instanceof ValidateError) {
       integrityOk = err.integrityOk;
       schemaOk = err.schemaOk;
-    }
-    if (err instanceof NotImplementedPhaseError) {
-      logHuman(
-        `[sync] フェーズ "${err.phase}" は未実装のため同期を中断しました`,
-      );
     }
   } finally {
     // cleanupは成否によらず必ず実行する（phase_reachedは失敗が発生した
@@ -120,6 +139,7 @@ export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
       integrityOk,
       schemaOk,
       rowsIngested,
+      collectorVersionSeen,
       errorMessage,
       rawCopyDeleted,
     });
