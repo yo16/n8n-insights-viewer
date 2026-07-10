@@ -1,0 +1,104 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: var(--fs-base);
+}
+
+.table th,
+.table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.table thead th {
+  background: var(--bg-subtle);
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.numericHeader {
+  text-align: right;
+}
+
+.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sortButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.sortButton:hover,
+.sortButton:focus-visible {
+  text-decoration: underline;
+}
+
+.sortIcon {
+  display: inline-block;
+  min-width: 1em;
+  font-size: var(--fs-xs);
+}
+
+.rowWarning td {
+  background: var(--color-warning-bg);
+}
+
+.rowDanger td {
+  background: var(--color-danger-bg);
+}
+
+.warnValue {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+
+.rowWarning .warnValue {
+  color: var(--color-warning);
+}
+
+.rowDanger .warnValue {
+  color: var(--color-danger);
+}
+
+.activeBadge {
+  color: var(--color-normal);
+}
+
+.inactiveBadge {
+  color: var(--text-disabled);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
