@@ -1,0 +1,32 @@
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.value {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-mono);
+}
+
+.icon {
+  font-size: var(--fs-base);
+  line-height: 1;
+}
+
+.reference {
+  font-size: var(--fs-xs);
+  color: var(--color-warning);
+  background: var(--color-warning-bg);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius);
+}
