@@ -69,6 +69,25 @@ describe("InsightsMetadataRowSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("必須キー(workflowName)が欠落していれば拒否する", () => {
+    const result = InsightsMetadataRowSchema.safeParse({
+      metaId: 5,
+      workflowId: null,
+      projectName: null,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("projectNameが数値なら拒否する", () => {
+    const result = InsightsMetadataRowSchema.safeParse({
+      metaId: 5,
+      workflowId: null,
+      workflowName: null,
+      projectName: 123,
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("WorkflowEntityRowSchema", () => {
@@ -104,6 +123,16 @@ describe("WorkflowEntityRowSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("必須キー(name)が欠落していれば拒否する", () => {
+    const result = WorkflowEntityRowSchema.safeParse({
+      id: "wf-1",
+      active: 0,
+      createdAt: null,
+      updatedAt: null,
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("WorkflowStatisticsRowSchema", () => {
@@ -122,6 +151,35 @@ describe("WorkflowStatisticsRowSchema", () => {
       workflowId: "wf-1",
       name: "production_success",
       count: "10",
+      latestEvent: null,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("workflowIdが空文字なら拒否する", () => {
+    const result = WorkflowStatisticsRowSchema.safeParse({
+      workflowId: "",
+      name: "production_success",
+      count: 10,
+      latestEvent: null,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("nameが空文字なら拒否する", () => {
+    const result = WorkflowStatisticsRowSchema.safeParse({
+      workflowId: "wf-1",
+      name: "",
+      count: 10,
+      latestEvent: null,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("workflowIdキーが欠落していれば拒否する", () => {
+    const result = WorkflowStatisticsRowSchema.safeParse({
+      name: "production_success",
+      count: 10,
       latestEvent: null,
     });
     expect(result.success).toBe(false);
@@ -171,5 +229,65 @@ describe("ExecutionEntityRowSchema", () => {
       ingestedAt: "2026-07-01T00:05:00.000Z",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("ingestedAtが空文字なら拒否する", () => {
+    const result = ExecutionEntityRowSchema.safeParse({
+      id: 100,
+      workflowId: "wf-1",
+      status: "success",
+      mode: "trigger",
+      startedAt: null,
+      stoppedAt: null,
+      createdAt: null,
+      finished: null,
+      ingestedAt: "",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("idが文字列なら拒否する（型違反）", () => {
+    const result = ExecutionEntityRowSchema.safeParse({
+      id: "100",
+      workflowId: "wf-1",
+      status: "success",
+      mode: "trigger",
+      startedAt: null,
+      stoppedAt: null,
+      createdAt: null,
+      finished: null,
+      ingestedAt: "2026-07-01T00:05:00.000Z",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("finishedが0/1/null以外(true)なら拒否する（型違反）", () => {
+    const result = ExecutionEntityRowSchema.safeParse({
+      id: 100,
+      workflowId: "wf-1",
+      status: "success",
+      mode: "trigger",
+      startedAt: null,
+      stoppedAt: null,
+      createdAt: null,
+      finished: true,
+      ingestedAt: "2026-07-01T00:05:00.000Z",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("finishedが2など0/1以外の数値なら拒否する（型違反）", () => {
+    const result = ExecutionEntityRowSchema.safeParse({
+      id: 100,
+      workflowId: "wf-1",
+      status: "success",
+      mode: "trigger",
+      startedAt: null,
+      stoppedAt: null,
+      createdAt: null,
+      finished: 2,
+      ingestedAt: "2026-07-01T00:05:00.000Z",
+    });
+    expect(result.success).toBe(false);
   });
 });
