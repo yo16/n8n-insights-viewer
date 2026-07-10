@@ -8,11 +8,15 @@ import type { MachineMetricsRow } from "../db/queries/machine";
  *
  * 最新の machine_metrics と thresholds設定から「正常/注意/危険」を判定する。
  * 各指標を閾値と比較し、最も重いレベルを全体状態とする。判定根拠（どの指標が
- * どの閾値を超えたか）を `reasons` に併記する。
+ * どの閾値に達したか）を `reasons` に併記する。
  *
- * - MemAvailable: 値が小さいほど悪化（`< warning` で注意、`< danger` で危険）
- * - スワップ使用量: 値が大きいほど悪化（`> warning` で注意、`> danger` で危険）
- * - database.sqlite + WAL サイズ: 値が大きいほど悪化（`> warning` で注意。危険閾値は設定なし）
+ * **閾値比較は包含比較（境界値を含む）で統一する**（PM判断・2026-07-10）。
+ * `config/thresholds.json` の既定値は2026-07のOOM障害の実測に基づく早期警戒ラインであり、
+ * その値に「到達した時点」で該当レベルを発火させるのが要件§6.3の意図であるため、
+ * 「閾値を超えたら」ではなく「閾値に達したら」を境界値として扱う:
+ * - MemAvailable: 値が小さいほど悪化（`<= warning` で注意、`<= danger` で危険）
+ * - スワップ使用量: 値が大きいほど悪化（`>= warning` で注意、`>= danger` で危険）
+ * - database.sqlite + WAL サイズ: 値が大きいほど悪化（`>= warning` で注意。危険閾値は設定なし）
  *
  * 本来の設計（api-design.md §4.3）では判定の純粋関数は `src/shared/status/evaluate.ts` に
  * 置く想定だが、本タスクの担当領域が `src/lib/aggregation/**` に限定されているため、
@@ -32,9 +36,17 @@ export interface StatusEvaluationInput {
 
 export interface StatusResult {
   level: StatusLevel;
-  /** 判定根拠（どの指標がどの閾値を超えたか）。normalの場合は空配列 */
+  /** 判定根拠（どの指標がどの閾値に達したか）。normalの場合は空配列 */
   reasons: string[];
 }
+// `reference`（参考値）フィールドは意図的に持たせない（PM判断・2026-07-10）:
+// 要件§6.3において「参考値」はトレンド（漸減・漸増の傾き算出。サンプル数が
+// trendSampleMin未満の場合に信頼度が低いことを示す概念）に対して定義されており、
+// `trend.ts` の `TrendResult.isReference` がこれを担う。状態評価は単一時点の
+// スナップショット判定であり、「サンプル数が少ないため参考値」という概念自体が
+// 該当しない（同じ値を何度評価しても結果は変わらず、時系列のサンプル数という
+// 概念を持たないため）。StatusResultとTrendResultの責務を混在させないため、
+// このフィールドは持たせない。
 
 const LEVEL_ORDER: Record<StatusLevel, number> = { normal: 0, warning: 1, danger: 2 };
 
@@ -82,14 +94,14 @@ export function evaluateStatus(
 
   if (input.memAvailableKb !== null) {
     const v = input.memAvailableKb;
-    if (v < thresholds.memAvailableKb.danger) {
+    if (v <= thresholds.memAvailableKb.danger) {
       reasons.push(
-        `MemAvailable ${v}KB が危険閾値 ${thresholds.memAvailableKb.danger}KB を下回っています`,
+        `MemAvailable ${v}KB が危険閾値 ${thresholds.memAvailableKb.danger}KB に達しています`,
       );
       level = escalate(level, "danger");
-    } else if (v < thresholds.memAvailableKb.warning) {
+    } else if (v <= thresholds.memAvailableKb.warning) {
       reasons.push(
-        `MemAvailable ${v}KB が注意閾値 ${thresholds.memAvailableKb.warning}KB を下回っています`,
+        `MemAvailable ${v}KB が注意閾値 ${thresholds.memAvailableKb.warning}KB に達しています`,
       );
       level = escalate(level, "warning");
     }
@@ -97,14 +109,14 @@ export function evaluateStatus(
 
   if (input.swapUsedKb !== null) {
     const v = input.swapUsedKb;
-    if (v > thresholds.swapUsedKb.danger) {
+    if (v >= thresholds.swapUsedKb.danger) {
       reasons.push(
-        `スワップ使用量 ${v}KB が危険閾値 ${thresholds.swapUsedKb.danger}KB を超えています`,
+        `スワップ使用量 ${v}KB が危険閾値 ${thresholds.swapUsedKb.danger}KB に達しています`,
       );
       level = escalate(level, "danger");
-    } else if (v > thresholds.swapUsedKb.warning) {
+    } else if (v >= thresholds.swapUsedKb.warning) {
       reasons.push(
-        `スワップ使用量 ${v}KB が注意閾値 ${thresholds.swapUsedKb.warning}KB を超えています`,
+        `スワップ使用量 ${v}KB が注意閾値 ${thresholds.swapUsedKb.warning}KB に達しています`,
       );
       level = escalate(level, "warning");
     }
@@ -112,9 +124,9 @@ export function evaluateStatus(
 
   if (input.dbSizeBytes !== null) {
     const v = input.dbSizeBytes;
-    if (v > thresholds.dbSizeBytes.warning) {
+    if (v >= thresholds.dbSizeBytes.warning) {
       reasons.push(
-        `DBサイズ ${v}bytes が注意閾値 ${thresholds.dbSizeBytes.warning}bytes を超えています`,
+        `DBサイズ ${v}bytes が注意閾値 ${thresholds.dbSizeBytes.warning}bytes に達しています`,
       );
       level = escalate(level, "warning");
     }
