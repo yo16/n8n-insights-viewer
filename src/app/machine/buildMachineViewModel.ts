@@ -40,6 +40,11 @@ import type { ChartEventMarker, ChartThreshold, TimeSeriesDatum } from "@/compon
  *    同一バケットに複数件ある場合は1本のマーカーにまとめてラベルに件数を表示する。
  * 5. **メモリ/スワップの単位**: KB→bytesへ変換し、チャート共通の`bytes`単位フォーマッタに乗せる
  *    （閾値もbytesへ換算して揃える）。
+ * 6. **状態バッジ/データ末尾注記は期間フィルタに依存させない**: `status` と
+ *    `latestSampleUtc` は、呼び出し側（`page.tsx`）が`getLatestMachineMetrics`（期間指定なし）
+ *    で取得した直近の実測値から算出する。期間タブ（24時間/7日/30日）でrangeスコープされた
+ *    `machineMetrics`の末尾を使うと、選択期間内にサンプルが無いだけで「未収集」に見えてしまう
+ *    ため、「今の状態」を示すバッジは常に全期間中の最新値を参照する。
  */
 
 export interface ContainerSeriesKey {
@@ -78,6 +83,11 @@ export interface BuildMachineViewModelInput {
   containerStats: ContainerStatsRow[];
   cpuMetrics: CpuMetricsRow[];
   oomEvents: OomEventRow[];
+  /**
+   * 期間フィルタに依存しない直近の実測値（`getLatestMachineMetrics`で取得）。
+   * 状態バッジ・データ末尾注記の算出に使う。データが1件も無ければ`undefined`。
+   */
+  latestMetricsRow: MachineMetricsRow | undefined;
   /** 期間の開始（UTC ISO8601） */
   sinceIso: string;
   /** 「今日」判定の基準となる現在時刻（UTC ISO8601） */
@@ -98,8 +108,16 @@ function pickPreferCron<T extends { source: string }>(
 }
 
 export function buildMachineViewModel(input: BuildMachineViewModelInput): MachineViewModel {
-  const { machineMetrics, containerStats, cpuMetrics, oomEvents, sinceIso, nowUtcIso, thresholds } =
-    input;
+  const {
+    machineMetrics,
+    containerStats,
+    cpuMetrics,
+    oomEvents,
+    latestMetricsRow,
+    sinceIso,
+    nowUtcIso,
+    thresholds,
+  } = input;
 
   const axis = buildHourlyAxis(jstHourKey(sinceIso), nowUtcIso);
 
@@ -128,6 +146,9 @@ export function buildMachineViewModel(input: BuildMachineViewModelInput): Machin
     if (row.loadavg_5 !== null) load5Map.set(key, row.loadavg_5);
     if (row.loadavg_15 !== null) load15Map.set(key, row.loadavg_15);
     if (row.db_size_bytes !== null) {
+      // wal_size_bytesが欠測（null）の場合はdb_size_bytes単体を採用する（0扱いで加算）。
+      // WALファイルは常時存在するとは限らず（チェックポイント直後は0バイト/未生成のことがある）、
+      // 収集失敗と区別できないため、欠測時にDBサイズ全体を欠測扱いにはしない意図的な仕様。
       dbSizeMap.set(key, row.db_size_bytes + (row.wal_size_bytes ?? 0));
     }
   }
@@ -196,8 +217,8 @@ export function buildMachineViewModel(input: BuildMachineViewModelInput): Machin
     }),
   );
 
-  const latestMetricsRow =
-    machineMetrics.length > 0 ? machineMetrics[machineMetrics.length - 1] : undefined;
+  // 状態バッジ・データ末尾注記は期間フィルタに依存しない直近の実測値から評価する
+  // （呼び出し側コメント・本ファイル先頭の独自判断6を参照）
   const status = evaluateStatus(buildStatusInputFromMachineMetrics(latestMetricsRow), thresholds);
   const latestSampleUtc = latestMetricsRow?.ts_utc ?? null;
 

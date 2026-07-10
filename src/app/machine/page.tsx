@@ -8,6 +8,7 @@ import { MachineStatusPanel } from "@/components/machine/MachineStatusPanel";
 import { RangeFilter, type MachineRange } from "@/components/machine/RangeFilter";
 import { loadThresholds } from "@/lib/config/thresholds";
 import { DbNotFoundError, getDb } from "@/lib/db/connection";
+import { getLatestMachineMetrics } from "@/lib/db/queries/dashboard";
 import {
   getCpuMetrics,
   getContainerStats,
@@ -81,12 +82,17 @@ export default async function MachinePage({ searchParams }: MachinePageProps) {
   const cpuMetrics = getCpuMetrics(db, { sinceIso });
   const oomEvents = getOomEvents(db, { sinceIso });
   const thresholds = loadThresholds();
+  // 状態バッジ・データ末尾注記は期間タブに左右されない「今の実測値」を示す必要があるため、
+  // 期間フィルタ（sinceIso）を掛けない getLatestMachineMetrics から別途取得する
+  // （buildMachineViewModel.ts 先頭コメントの独自判断6を参照）。
+  const latestMetricsRow = getLatestMachineMetrics(db);
 
   const viewModel = buildMachineViewModel({
     machineMetrics,
     containerStats,
     cpuMetrics,
     oomEvents,
+    latestMetricsRow,
     sinceIso,
     nowUtcIso,
     thresholds,
@@ -146,7 +152,10 @@ export default async function MachinePage({ searchParams }: MachinePageProps) {
         dbSizeTrend={viewModel.dbSizeTrend}
       />
 
-      <DataCoverageNote latestSampleUtc={viewModel.latestSampleUtc} />
+      <DataCoverageNote
+        latestSampleUtc={viewModel.latestSampleUtc}
+        inRangeHasData={hasAnyData}
+      />
 
       {!hasAnyData ? (
         <EmptyState message="この期間に該当するマシン負荷データがありません。" />
