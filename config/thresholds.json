@@ -1,0 +1,6 @@
+{
+  "memAvailableKb": { "warning": 153600, "danger": 102400 },
+  "swapUsedKb": { "warning": 1048576, "danger": 1572864 },
+  "dbSizeBytes": { "warning": 419430400 },
+  "trendSampleMin": 4
+}

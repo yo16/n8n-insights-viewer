@@ -142,9 +142,19 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
+# Next.js generated types
+next-env.d.ts
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
 # n8n-insights-viewer: 同期データ（n8n DBコピー・蓄積DB。機微データを含むためコミット禁止）
 data/
 
 # Claude Code
 tmp/
 .claude/settings.local.json
+.claude/worktrees/
