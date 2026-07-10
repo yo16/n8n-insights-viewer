@@ -103,14 +103,14 @@ export default async function InsightsPage({ searchParams }: InsightsPageProps) 
               data={chartModel.executionsData}
               series={EXECUTIONS_SERIES}
               yAxisUnit="count"
-              footnote={<WeekApproxFootnote />}
+              footnote={chartModel.hasApproxPoints ? <WeekApproxFootnote /> : undefined}
             />
             <TimeSeriesChart
               title="実行時間（合計）"
               data={chartModel.runtimeData}
               series={RUNTIME_SERIES}
               yAxisUnit="ms"
-              footnote={<WeekApproxFootnote />}
+              footnote={chartModel.hasApproxPoints ? <WeekApproxFootnote /> : undefined}
             />
           </div>
         </>

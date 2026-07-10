@@ -52,6 +52,8 @@ export interface InsightsChartModel {
   lastDataDayKey: string | null;
   /** 今日のJST日付キー（軸の右端） */
   todayDayKey: string;
+  /** 表示範囲内にUTC区切り近似集計（day/week由来）の点が1つでも含まれるか */
+  hasApproxPoints: boolean;
 }
 
 interface DayBucket {
@@ -107,6 +109,7 @@ export function buildInsightsChartData(
       hasAnyData: false,
       lastDataDayKey: null,
       todayDayKey,
+      hasApproxPoints: false,
     };
   }
 
@@ -119,11 +122,13 @@ export function buildInsightsChartData(
 
   const executionsData: TimeSeriesDatum[] = [];
   const runtimeData: TimeSeriesDatum[] = [];
+  let hasApproxPoints = false;
 
   for (const key of axis) {
     const bucket = dayMap.get(key);
     const withinDataCoverage = key <= lastDataDayKey;
     const isApprox = bucket?.isApprox ?? false;
+    if (isApprox) hasApproxPoints = true;
 
     executionsData.push({
       key,
@@ -138,5 +143,12 @@ export function buildInsightsChartData(
     });
   }
 
-  return { executionsData, runtimeData, hasAnyData: true, lastDataDayKey, todayDayKey };
+  return {
+    executionsData,
+    runtimeData,
+    hasAnyData: true,
+    lastDataDayKey,
+    todayDayKey,
+    hasApproxPoints,
+  };
 }
