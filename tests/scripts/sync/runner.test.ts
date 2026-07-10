@@ -126,7 +126,7 @@ describe("runSync", () => {
     db.close();
   }
 
-  it("fetch→ingestまで成功し、collect-metricsフェーズで失敗として停止する", async () => {
+  it("fetch→ingestまで成功し、collect-metricsも実行してcleanupまで到達する（collect-metricsはFakeCommandRunnerの既定値=空出力・exitCode0で完走する）", async () => {
     writeValidFixtureDb();
     const runner = fakeSuccessfulFetchRunner();
 
@@ -141,9 +141,9 @@ describe("runSync", () => {
       accumulationDbPath,
     });
 
-    expect(result.status).toBe("failed");
-    expect(result.phaseReached).toBe("collect-metrics");
-    expect(result.errorMessage).toMatch(/collect-metrics/);
+    expect(result.status).toBe("success");
+    expect(result.phaseReached).toBe("cleanup");
+    expect(result.errorMessage).toBeUndefined();
     expect(result.rowsIngested).toEqual({
       insights_by_period: 1,
       insights_metadata: 1,
@@ -182,7 +182,7 @@ describe("runSync", () => {
     expect(fs.existsSync(rawDbPath)).toBe(false);
   });
 
-  it("sync_historyにfailed/phase_reached=collect-metricsと取り込み件数が記録される", async () => {
+  it("sync_historyにsuccess/phase_reached=cleanupと取り込み件数が記録される", async () => {
     writeValidFixtureDb();
     const runner = fakeSuccessfulFetchRunner();
 
@@ -205,8 +205,8 @@ describe("runSync", () => {
         )
         .get() as Record<string, unknown>;
 
-      expect(row.status).toBe("failed");
-      expect(row.phase_reached).toBe("collect-metrics");
+      expect(row.status).toBe("success");
+      expect(row.phase_reached).toBe("cleanup");
       expect(row.integrity_ok).toBe(1);
       expect(row.schema_ok).toBe(1);
       expect(row.raw_copy_deleted).toBe(1);
