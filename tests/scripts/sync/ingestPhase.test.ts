@@ -207,6 +207,37 @@ describe("runIngestPhase", () => {
     expect(tables).not.toContain("variables");
   });
 
+  it("抽出結果が全テーブル空配列の場合、DELETEのみ実行されINSERTは行われず件数はすべて0になる", () => {
+    // 事前に1回分のデータを取り込んでおき、DELETEが実際に効くことも合わせて確認する
+    runIngestPhase(db, makeExtracted());
+
+    const emptyExtracted: ExtractedData = {
+      insightsByPeriod: [],
+      insightsMetadata: [],
+      workflowEntity: [],
+      workflowStatistics: [],
+      executionEntity: [],
+    };
+
+    const result = runIngestPhase(db, emptyExtracted);
+
+    expect(result.rowsIngested).toEqual({
+      insights_by_period: 0,
+      insights_metadata: 0,
+      workflow_entity: 0,
+      workflow_statistics: 0,
+      execution_entity: 0,
+    });
+
+    // 全置換テーブルはDELETEにより空になる
+    expect(db.prepare("SELECT * FROM insights_by_period").all()).toHaveLength(0);
+    expect(db.prepare("SELECT * FROM insights_metadata").all()).toHaveLength(0);
+    expect(db.prepare("SELECT * FROM workflow_entity").all()).toHaveLength(0);
+    expect(db.prepare("SELECT * FROM workflow_statistics").all()).toHaveLength(0);
+    // execution_entityはUPSERT対象のため、空配列を渡してもDELETEは行わず既存行が残る
+    expect(db.prepare("SELECT * FROM execution_entity").all()).toHaveLength(1);
+  });
+
   it("取り込み中にエラーが起きた場合は単一トランザクションでロールバックされる", () => {
     // workflow_entity.nameはNOT NULLのため、nullを渡すと後段のinsertで例外が発生する
     const extracted = makeExtracted({

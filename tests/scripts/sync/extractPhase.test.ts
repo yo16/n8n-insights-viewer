@@ -201,4 +201,18 @@ describe("runExtractPhase", () => {
     const missingPath = path.join(tmpDir, "does-not-exist.sqlite");
     expect(() => runExtractPhase(missingPath)).toThrow(ExtractError);
   });
+
+  it("テーブルは存在するが0行の場合、エラーにならず全テーブル空配列を返す", () => {
+    const db = new Database(dbPath);
+    db.exec(CREATE_FULL_SCHEMA);
+    db.close();
+
+    const result = runExtractPhase(dbPath);
+
+    expect(result.insightsByPeriod).toEqual([]);
+    expect(result.insightsMetadata).toEqual([]);
+    expect(result.workflowEntity).toEqual([]);
+    expect(result.workflowStatistics).toEqual([]);
+    expect(result.executionEntity).toEqual([]);
+  });
 });
