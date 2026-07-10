@@ -131,6 +131,11 @@ export function SyncButton() {
 
     es.onerror = () => {
       es.close();
+      setState({
+        kind: "done",
+        status: "failed",
+        error: "進捗の購読中に接続エラーが発生しました。同期自体は継続している場合があります。",
+      });
     };
   }, [router]);
 
