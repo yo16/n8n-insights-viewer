@@ -1,4 +1,5 @@
 import { runDeployCollector } from "../../../scripts/deploy-collector/deployRunner";
+import { buildRemoteUploadTempName } from "../../../scripts/deploy-collector/deployCommands";
 import type { DeployCollectorConfig } from "../../../scripts/deploy-collector/deployConfig";
 import type { GcloudSyncConfig } from "../../../scripts/sync/config";
 import { FakeCommandRunner } from "../sync/fakes/fakeCommandRunner";
@@ -109,23 +110,32 @@ describe("runDeployCollector（承認後の実行フロー）", () => {
     expect(result.status).toBe("success");
     expect(runner.calls).toHaveLength(6);
 
-    // 1. mkdir -p
-    expect(runner.calls[0].args).toContain(`mkdir -p '${deployConfig.remoteDir}'`);
-    // 2. scp（レンダリング済みローカル一時ファイル → リモートパス）
+    const remoteUploadTempName = buildRemoteUploadTempName(
+      deployConfig.remoteScriptPath,
+    );
+
+    // 1. sudo mkdir -p（設置先が/root配下のためsudo）
+    expect(runner.calls[0].args).toContain(
+      `sudo mkdir -p '${deployConfig.remoteDir}'`,
+    );
+    // 2. scp（レンダリング済みローカル一時ファイル → SSHユーザーのホーム基準の相対パス。
+    //    /root配下へ直接scpできないため）
     expect(runner.calls[1].args).toContain("scp");
     expect(runner.calls[1].args).toContain(localTempFile);
     expect(runner.calls[1].args).toContain(
-      `${gcloudConfig.instance}:${deployConfig.remoteScriptPath}`,
+      `${gcloudConfig.instance}:${remoteUploadTempName}`,
     );
-    // 3. chmod +x
+    // 3. sudo mv + sudo chmod 755（ホームの一時ファイルを設置先へ移動し実行権限を付与）
     expect(runner.calls[2].args).toContain(
-      `chmod +x '${deployConfig.remoteScriptPath}'`,
+      `sudo mv '${remoteUploadTempName}' '${deployConfig.remoteScriptPath}' && sudo chmod 755 '${deployConfig.remoteScriptPath}'`,
     );
-    // 4. crontab読み取り
-    expect(runner.calls[3].args).toContain("crontab -l 2>/dev/null || true");
-    // 5. crontab書き戻し（既存内容を保持したまま冪等マージされていること）
+    // 4. crontab（root）読み取り
+    expect(runner.calls[3].args).toContain(
+      "sudo crontab -l 2>/dev/null || true",
+    );
+    // 5. crontab（root）書き戻し（既存内容を保持したまま冪等マージされていること）
     const writeCommandStr = runner.calls[4].args[runner.calls[4].args.length - 1];
-    const base64Match = /echo '([^']+)' \| base64 -d \| crontab -/.exec(
+    const base64Match = /echo '([^']+)' \| base64 -d \| sudo crontab -/.exec(
       writeCommandStr,
     );
     expect(base64Match).not.toBeNull();
@@ -170,7 +180,7 @@ describe("runDeployCollector（承認後の実行フロー）", () => {
     });
 
     const writeCommandStr = runner.calls[4].args[runner.calls[4].args.length - 1];
-    const base64Match = /echo '([^']+)' \| base64 -d \| crontab -/.exec(
+    const base64Match = /echo '([^']+)' \| base64 -d \| sudo crontab -/.exec(
       writeCommandStr,
     );
     const decoded = Buffer.from(base64Match![1], "base64").toString("utf8");
@@ -237,11 +247,11 @@ describe("runDeployCollector（承認後の実行フロー）", () => {
     expect(removeLocalTempFile).toHaveBeenCalledWith("/tmp/rendered.sh");
   });
 
-  it("chmodが失敗した場合はfailedを返し、crontab関連コマンドは実行されない", async () => {
+  it("sudo mv/chmodによる設置が失敗した場合はfailedを返し、crontab関連コマンドは実行されない", async () => {
     const runner = new FakeCommandRunner([
       { stdout: "", stderr: "", exitCode: 0 }, // mkdir成功
       { stdout: "", stderr: "", exitCode: 0 }, // scp成功
-      { stdout: "", stderr: "chmod: no such file", exitCode: 1 }, // chmod失敗
+      { stdout: "", stderr: "mv: no such file", exitCode: 1 }, // sudo mv/chmod失敗
     ]);
     const logger = makeLogger();
     const removeLocalTempFile = jest.fn().mockResolvedValue(undefined);
@@ -258,8 +268,8 @@ describe("runDeployCollector（承認後の実行フロー）", () => {
     });
 
     expect(result.status).toBe("failed");
-    expect(result.errorMessage).toContain("実行権限の付与に失敗");
-    // mkdir・scp・chmodのみ実行され、crontab読み取り以降は実行されない
+    expect(result.errorMessage).toContain("collector.shの設置（sudo mv/chmod）に失敗");
+    // mkdir・scp・sudo mv/chmodのみ実行され、crontab読み取り以降は実行されない
     expect(runner.calls).toHaveLength(3);
     expect(removeLocalTempFile).toHaveBeenCalledWith("/tmp/rendered.sh");
   });

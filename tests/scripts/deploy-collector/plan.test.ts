@@ -25,10 +25,11 @@ describe("formatPlan", () => {
 });
 
 describe("formatUninstallInstructions", () => {
-  it("cron行の削除手順とディレクトリ削除手順を含む", () => {
+  it("cron行の削除手順とディレクトリ削除手順を含む（設置先が/root配下・rootのcrontabのためsudo付き）", () => {
     const text = formatUninstallInstructions(plan);
     expect(text).toContain(plan.cronLine);
-    expect(text).toContain(`rm -rf ${plan.remoteDir}`);
+    expect(text).toContain("sudo crontab -e");
+    expect(text).toContain(`sudo rm -rf ${plan.remoteDir}`);
     expect(text).toContain(plan.instance);
   });
 });

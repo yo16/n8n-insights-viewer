@@ -7,7 +7,21 @@
  * crontab更新）のみ。実行（子プロセス起動）は `scripts/sync/commandRunner.ts` の
  * `CommandRunner` に委譲し、本ファイルはコマンド・引数の組み立てにのみ専念する
  * （単体テストで実gcloudを使わずに組み立て結果のみを検証できるようにするため）。
+ *
+ * **設置先は `/root` 配下+rootのcrontab**（docs/requirements.md §5.3）である一方、
+ * SSH接続ユーザーは一般ユーザーのため、`/root` 配下への書き込み系操作
+ * （mkdir/スクリプト配置/crontab更新）はすべて `sudo` 経由で実行する
+ * （GCEインスタンスはsudo NOPASSWD設定済み。`scripts/sync/gcloudCommands.ts` の
+ * fetchフェーズが同様に `sudo cp` で実績あり）。
+ *
+ * `gcloud compute scp` は一般ユーザーの認証情報で転送するため `/root` へ直接
+ * 書き込めない。そのため、スクリプト配置は2段階で行う:
+ * 1. scpでSSHユーザーのホーム（相対パス = ホーム基準）へ一時ファイルとして転送
+ * 2. sshで `sudo mv` によりホームの一時ファイルを設置先（`/root`配下）へ移動し、
+ *    `sudo chmod` で実行権限を付与する（`mv` によりホームに一時ファイルは残らない）
  */
+
+import path from "path";
 
 import type { GcloudSyncConfig } from "../sync/config";
 
@@ -25,7 +39,16 @@ function projectZoneArgs(config: GcloudSyncConfig): string[] {
   return [`--project=${config.project}`, `--zone=${config.zone}`];
 }
 
-/** 専用ディレクトリを作成するコマンド（`mkdir -p`。既存でも失敗しない）。 */
+/**
+ * scpの転送先（SSHユーザーのホーム基準の相対パス）のファイル名を組み立てる。
+ * `remoteScriptPath` のベース名に `.upload` を付与し、設置先ファイルと衝突しない
+ * 一時名にする（例: `collector.sh` → `collector.sh.upload`）。
+ */
+export function buildRemoteUploadTempName(remoteScriptPath: string): string {
+  return `${path.posix.basename(remoteScriptPath)}.upload`;
+}
+
+/** 専用ディレクトリを作成するコマンド（`sudo mkdir -p`。既存でも失敗しない）。 */
 export function buildMkdirCommand(
   config: GcloudSyncConfig,
   remoteDir: string,
@@ -39,37 +62,47 @@ export function buildMkdirCommand(
       config.instance,
       ...projectZoneArgs(config),
       "--command",
-      `mkdir -p '${remoteDir}'`,
+      `sudo mkdir -p '${remoteDir}'`,
     ],
   };
 }
 
-/** レンダリング済みcollector.shをローカルからVMへ転送するコマンド（scp）。 */
+/**
+ * レンダリング済みcollector.shをローカルからVMへ転送するコマンド（scp）。
+ * `/root` 配下へ直接書き込めないため、転送先は **SSHユーザーのホーム基準の
+ * 相対パス**（`remoteUploadTempName`）にする。設置先への移動は
+ * `buildInstallScriptCommand` が `sudo mv` で行う。
+ */
 export function buildScpUploadCommand(
   config: GcloudSyncConfig,
   localScriptPath: string,
-  remoteScriptPath: string,
+  remoteUploadTempName: string,
 ): PlannedCommand {
   return {
-    description: `collector.shを転送: ${localScriptPath} → ${remoteScriptPath}`,
+    description: `collector.shを転送: ${localScriptPath} → ~/${remoteUploadTempName}`,
     command: "gcloud",
     args: [
       "compute",
       "scp",
       localScriptPath,
-      `${config.instance}:${remoteScriptPath}`,
+      `${config.instance}:${remoteUploadTempName}`,
       ...projectZoneArgs(config),
     ],
   };
 }
 
-/** 転送したcollector.shに実行権限を付与するコマンド。 */
-export function buildChmodCommand(
+/**
+ * ホームへ転送済みの一時ファイルを設置先（`/root`配下）へ `sudo mv` し、
+ * `sudo chmod` で実行権限を付与するコマンド。
+ * `mv` を使うため、成功時にホームに一時ファイルは残らない。
+ */
+export function buildInstallScriptCommand(
   config: GcloudSyncConfig,
+  remoteUploadTempName: string,
   remoteScriptPath: string,
 ): PlannedCommand {
   return {
-    description: `実行権限を付与: ${remoteScriptPath}`,
+    description: `collector.shを設置し実行権限を付与: ${remoteScriptPath}`,
     command: "gcloud",
     args: [
       "compute",
@@ -77,14 +110,14 @@ export function buildChmodCommand(
       config.instance,
       ...projectZoneArgs(config),
       "--command",
-      `chmod +x '${remoteScriptPath}'`,
+      `sudo mv '${remoteUploadTempName}' '${remoteScriptPath}' && sudo chmod 755 '${remoteScriptPath}'`,
     ],
   };
 }
 
 /**
- * 既存crontabを読み取るコマンド。
- * crontab未設定（`crontab -l` が失敗する）場合でも、`|| true` により
+ * 既存crontab（**rootのcrontab**。docs/requirements.md §5.3）を読み取るコマンド。
+ * crontab未設定（`sudo crontab -l` が失敗する）場合でも、`|| true` により
  * 呼び出し側は空文字列として扱える（exitCodeは常に0に丸める）。
  *
  * **重要**: この `|| true` は「crontab未設定」という正常系のみを吸収するためのもの。
@@ -98,7 +131,7 @@ export function buildReadCrontabCommand(
   config: GcloudSyncConfig,
 ): PlannedCommand {
   return {
-    description: "既存crontabを読み取り",
+    description: "既存crontab（root）を読み取り",
     command: "gcloud",
     args: [
       "compute",
@@ -106,16 +139,17 @@ export function buildReadCrontabCommand(
       config.instance,
       ...projectZoneArgs(config),
       "--command",
-      "crontab -l 2>/dev/null || true",
+      "sudo crontab -l 2>/dev/null || true",
     ],
   };
 }
 
 /**
- * crontabを書き戻すコマンド（`crontab.ts` の `mergeCrontab` で冪等マージ済みの内容を渡す）。
+ * crontab（**rootのcrontab**）を書き戻すコマンド（`crontab.ts` の `mergeCrontab` で
+ * 冪等マージ済みの内容を渡す）。
  *
  * シェルの引用符崩れを避けるため、内容はbase64エンコードして渡し、
- * リモート側で `base64 -d | crontab -` によりデコードして書き戻す
+ * リモート側で `base64 -d | sudo crontab -` によりデコードして書き戻す
  * （改行・特殊文字を含むcrontab内容を安全に転送するため）。
  */
 export function buildWriteCrontabCommand(
@@ -126,7 +160,7 @@ export function buildWriteCrontabCommand(
     "base64",
   );
   return {
-    description: "crontabを更新（既存行を保持したまま冪等に置換/追加）",
+    description: "crontab（root）を更新（既存行を保持したまま冪等に置換/追加）",
     command: "gcloud",
     args: [
       "compute",
@@ -134,7 +168,7 @@ export function buildWriteCrontabCommand(
       config.instance,
       ...projectZoneArgs(config),
       "--command",
-      `echo '${base64Content}' | base64 -d | crontab -`,
+      `echo '${base64Content}' | base64 -d | sudo crontab -`,
     ],
   };
 }
@@ -142,14 +176,15 @@ export function buildWriteCrontabCommand(
 /**
  * 設置後の検証コマンド（スクリプトの存在・実行権限・crontab行の確認）。
  * 標準出力に `SCRIPT_OK`/`SCRIPT_MISSING`、`CRON_OK`/`CRON_MISSING` を出力させる。
+ * 設置先が`/root`配下・crontabがrootのものであるため、いずれも `sudo` 経由で確認する。
  */
 export function buildVerifyCommand(
   config: GcloudSyncConfig,
   remoteScriptPath: string,
 ): PlannedCommand {
   const script = [
-    `test -x '${remoteScriptPath}' && echo SCRIPT_OK || echo SCRIPT_MISSING`,
-    `(crontab -l 2>/dev/null | grep -F '${remoteScriptPath}' >/dev/null && echo CRON_OK || echo CRON_MISSING)`,
+    `sudo test -x '${remoteScriptPath}' && echo SCRIPT_OK || echo SCRIPT_MISSING`,
+    `(sudo crontab -l 2>/dev/null | grep -F '${remoteScriptPath}' >/dev/null && echo CRON_OK || echo CRON_MISSING)`,
   ].join(" ; ");
   return {
     description: "設置内容を検証（スクリプト存在・crontab行）",

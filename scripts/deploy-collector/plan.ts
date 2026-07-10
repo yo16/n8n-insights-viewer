@@ -41,12 +41,16 @@ export function formatPlan(plan: DeployPlan): string {
   ].join("\n");
 }
 
-/** アンインストール手順を表示用テキストへ整形する。 */
+/**
+ * アンインストール手順を表示用テキストへ整形する。
+ * 設置先が `/root` 配下・crontabがrootのものであるため、
+ * 手順はいずれも `sudo` 経由（`sudo crontab -e` / `sudo rm -rf`）。
+ */
 export function formatUninstallInstructions(plan: DeployPlan): string {
   return [
     "==== アンインストール手順（手動で実行してください） ====",
     `1. VMへSSH接続: gcloud compute ssh ${plan.instance} --project=${plan.project} --zone=${plan.zone}`,
-    `2. crontab -e で以下の行を削除: ${plan.cronLine}`,
+    `2. sudo crontab -e で以下の行を削除: ${plan.cronLine}`,
     `3. スクリプトと出力ファイルを削除: sudo rm -rf ${plan.remoteDir}`,
     "==========================================================",
   ].join("\n");

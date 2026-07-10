@@ -20,9 +20,10 @@ import {
   type DeployCollectorConfig,
 } from "./deployConfig";
 import {
-  buildChmodCommand,
+  buildInstallScriptCommand,
   buildMkdirCommand,
   buildReadCrontabCommand,
+  buildRemoteUploadTempName,
   buildScpUploadCommand,
   buildVerifyCommand,
   buildWriteCrontabCommand,
@@ -120,10 +121,15 @@ export async function runDeployCollector(
       );
     }
 
+    // /root配下へ直接scpできないため、まずSSHユーザーのホーム基準の
+    // 相対パス（一時ファイル名）へ転送する。
+    const remoteUploadTempName = buildRemoteUploadTempName(
+      deployConfig.remoteScriptPath,
+    );
     const scp = buildScpUploadCommand(
       gcloudConfig,
       localTempFile,
-      deployConfig.remoteScriptPath,
+      remoteUploadTempName,
     );
     const scpResult = await options.runner.run(scp.command, scp.args);
     if (scpResult.exitCode !== 0) {
@@ -132,14 +138,20 @@ export async function runDeployCollector(
       );
     }
 
-    const chmod = buildChmodCommand(
+    // ホームの一時ファイルを `sudo mv` で設置先（/root配下）へ移動し、
+    // `sudo chmod` で実行権限を付与する（mvのためホームに一時ファイルは残らない）。
+    const install = buildInstallScriptCommand(
       gcloudConfig,
+      remoteUploadTempName,
       deployConfig.remoteScriptPath,
     );
-    const chmodResult = await options.runner.run(chmod.command, chmod.args);
-    if (chmodResult.exitCode !== 0) {
+    const installResult = await options.runner.run(
+      install.command,
+      install.args,
+    );
+    if (installResult.exitCode !== 0) {
       throw new Error(
-        `実行権限の付与に失敗しました: ${chmodResult.stderr || chmodResult.stdout}`,
+        `collector.shの設置（sudo mv/chmod）に失敗しました: ${installResult.stderr || installResult.stdout}`,
       );
     }
 

@@ -139,12 +139,13 @@ TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 1. リポジトリ内の collector.sh とcron行を読み込む
 2. 「サーバーへ何を配置し、crontabに何を追加するか」を差分表示:
    - 配置先: /root/insights_collector/collector.sh（新規 or 既存版vX → 新版vY）
-   - crontab追加/変更行: 17 * * * * /root/insights_collector/collector.sh
+   - crontab追加/変更行: 17 * * * * /root/insights_collector/collector.sh（rootのcrontab）
    - 既存cronがあれば現状との差分を表示
 3. ユーザーに確認プロンプト（yes/no）。noなら中止（何もしない）
 4. yesのときのみ:
-   - gcloud compute scp で collector.sh を /root/insights_collector/ へ配置
-   - gcloud compute ssh で mkdir -p / chmod +x / crontab更新（既存行を重複させない）
+   - gcloud compute scp で collector.sh をSSHユーザーのホーム（相対パス）へ一時転送
+   - gcloud compute ssh で sudo mkdir -p / sudo mv（一時ファイル→設置先）/
+     sudo chmod 755 / rootのcrontab更新（既存行を重複させない）
 5. 設置後、collector.sh を1回手動実行して metrics.jsonl に1行出ることを確認
 ```
 
@@ -152,6 +153,31 @@ TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   （現行crontabを取得 → 目的行が無ければ追記 → 書き戻し）
 - これはVMへの**唯一許可された書き込み操作**。他の書き込みは一切含めない
   （[security-design.md §5](./security-design.md#5-本番サーバー保護)）
+
+#### 4.1.1 設置先が `/root` 配下・rootのcrontabであることに伴う sudo 経由の設計
+
+設置先は `/root/insights_collector/`、crontabは**rootのcrontab**（[要件 §5.3](../requirements.md)）
+である一方、SSH接続ユーザーは一般ユーザーのため、`/root` 配下への書き込み系操作は
+すべて `sudo` 経由で実行する（GCEインスタンスはsudo NOPASSWD設定済み。
+`scripts/sync/gcloudCommands.ts` のfetchフェーズが同様に `sudo cp` で実績あり）:
+
+- `sudo mkdir -p '<remoteDir>'`（専用ディレクトリ作成）
+- `sudo mv '<home上の一時ファイル>' '<remoteScriptPath>' && sudo chmod 755 '<remoteScriptPath>'`（設置+権限付与）
+- `sudo crontab -l 2>/dev/null || true`（root crontab読み取り。未設定時は空扱いに正規化）
+- `echo '<base64>' | base64 -d | sudo crontab -`（root crontabへの書き戻し）
+- `sudo test -x '<remoteScriptPath>'` / `sudo crontab -l` ベースの設置後検証
+
+`gcloud compute scp` は一般ユーザーの認証情報で転送するため `/root` へ直接書き込めない。
+そのため、スクリプト配置は**2段階**にする:
+
+1. `gcloud compute scp` でレンダリング済みcollector.shを、SSHユーザーの**ホーム基準の
+   相対パス**（一時ファイル名。例: `collector.sh.upload`）へ転送する
+2. `gcloud compute ssh` で `sudo mv` により、ホームの一時ファイルを設置先（`/root`配下）へ
+   移動し、`sudo chmod 755` で実行権限を付与する（`mv` を使うため、成功時にホームへ
+   一時ファイルは残らない）
+
+アンインストール手順の表示（`plan.ts` の `formatUninstallInstructions`）も同様に
+`sudo crontab -e` / `sudo rm -rf` で統一する。
 
 ### 4.2 GCP固有判断
 
