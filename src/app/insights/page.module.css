@@ -1,0 +1,17 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--fs-xl);
+  color: var(--text-primary);
+}
+
+.charts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
