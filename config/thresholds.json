@@ -1,0 +1,5 @@
+{
+  "memAvailableMb": { "warning": 150, "danger": 100 },
+  "swapUsedMb": { "warning": 1024, "danger": 1536 },
+  "dbSizeMb": { "warning": 400 }
+}
