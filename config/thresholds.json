@@ -1,5 +1,6 @@
 {
-  "memAvailableMb": { "warning": 150, "danger": 100 },
-  "swapUsedMb": { "warning": 1024, "danger": 1536 },
-  "dbSizeMb": { "warning": 400 }
+  "memAvailableKb": { "warning": 153600, "danger": 102400 },
+  "swapUsedKb": { "warning": 1048576, "danger": 1572864 },
+  "dbSizeBytes": { "warning": 419430400 },
+  "trendSampleMin": 4
 }
