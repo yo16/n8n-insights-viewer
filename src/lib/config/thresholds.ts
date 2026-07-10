@@ -1,9 +1,4 @@
-// NOTE: 本来は Next.js 規約に合わせて `import "server-only";` を先頭に置きたいが、
-// "server-only" パッケージは現時点で package.json に未導入であり、
-// 本タスクの制約（package.jsonへの依存追加はしない）により追加できない。
-// fsを使う本モジュールはNext.jsのServer専用コード（src/lib配下）にのみ配置しており、
-// クライアントバンドルからimportされない運用を前提とする。
-// 依存追加は別タスクで検討し、追加され次第 `import "server-only";` を有効化すること。
+import "server-only";
 import fs from "fs";
 import path from "path";
 import { z } from "zod";
