@@ -191,6 +191,40 @@ describe("runCollectMetricsPhase", () => {
     expect(cpuRows).toHaveLength(1);
   });
 
+  it("killed_processが特定できないOOM行はoom_eventsに取り込まれず、識別可能な行のみ取り込まれる", async () => {
+    // journalctl出力を模した複数行: 1行目は"Killed process"のプロセス名を含み識別可能、
+    // 2行目は"invoked oom-killer"のみでプロセス名(括弧書き)を含まないため識別不能。
+    const mixedOomStdout = [
+      "journalctl|2026-07-05T03:12:45+0000 host kernel: Out of memory: Killed process 1234 (node) total-vm:2048000kB, anon-rss:900000kB",
+      "journalctl|2026-07-05T03:10:00+0000 host kernel: node invoked oom-killer: gfp_mask=0x, order=0",
+    ].join("\n");
+
+    const runner = new FakeCommandRunner([
+      { stdout: SPOT_STDOUT, stderr: "", exitCode: 0 }, // spot
+      { stdout: mixedOomStdout, stderr: "", exitCode: 0 }, // oom (2行: 識別可能1件+識別不能1件)
+      { stdout: "", stderr: "no such file", exitCode: 1 }, // scp (未設置)
+      { stdout: "[]", stderr: "", exitCode: 0 }, // cpu metrics
+    ]);
+
+    const result = await runCollectMetricsPhase(db, {
+      runner,
+      gcloudConfig,
+      collectMetricsConfig: makeCollectMetricsConfig(),
+    });
+
+    expect(result.warnings).toEqual([]);
+
+    const oomRows = db.prepare("SELECT * FROM oom_events").all() as Array<
+      Record<string, unknown>
+    >;
+    // 識別可能な1件のみが取り込まれる（識別不能な行は除外される）
+    expect(oomRows).toHaveLength(1);
+    expect(oomRows[0].killed_process).toBe("node");
+    expect(oomRows[0].occurred_at_utc).toBe(
+      new Date("2026-07-05T03:12:45+0000").toISOString(),
+    );
+  });
+
   it("collectorのバージョン不一致はwarningsに記録されるが取り込みは継続する", async () => {
     const mismatchedSample = COLLECTOR_JSONL_SAMPLE.replace(
       '"v":"collector-1"',
