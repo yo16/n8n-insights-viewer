@@ -34,13 +34,27 @@ export class DbNotFoundError extends Error {
   }
 }
 
-/** better-sqlite3のエラーメッセージから「ファイルが存在しない」ケースを判定する。 */
+/** better-sqlite3のエラーから「ファイルが存在しない」ケースを判定する。 */
 function isFileMissingError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
+  // better-sqlite3（SqliteError）は fileMustExist:true でファイルが無い場合、
+  // `code` プロパティに "SQLITE_CANTOPEN" を持つ。
+  // `instanceof Error` より先に判定する: jest.resetModules() 等でネイティブアドオンが
+  // 再ロードされる環境では、稀に `instanceof Error` が偽になるケースが観測されており、
+  // 文字列プロパティである `code` はその影響を受けないため優先して判定する。
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === "SQLITE_CANTOPEN"
+  ) {
+    return true;
+  }
+
+  // フォールバック: メッセージ内容での判定
   // better-sqlite3は fileMustExist:true でファイルが無い場合、
   // - ファイルの親ディレクトリごと無い場合: "Cannot open database because the directory does not exist"
   // - 親ディレクトリはあるがファイルが無い場合: "unable to open database file"
   // のいずれかのメッセージの例外を投げる
+  if (!(err instanceof Error)) return false;
   return (
     /unable to open database file/i.test(err.message) ||
     /directory does not exist/i.test(err.message)

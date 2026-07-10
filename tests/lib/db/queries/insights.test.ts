@@ -81,4 +81,14 @@ describe("queries/insights", () => {
 
     expect(rows).toEqual([]);
   });
+
+  it("存在しないworkflowIdを指定した場合は空配列を返す", () => {
+    const rows = getInsightsTimeSeries(db, {
+      periodUnit: 1,
+      sinceIso: "2026-07-01T00:00:00.000Z",
+      workflowId: "wf-not-exist",
+    });
+
+    expect(rows).toEqual([]);
+  });
 });

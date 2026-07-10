@@ -111,6 +111,49 @@ describe("queries/executions", () => {
       const rows = getExecutions(db, { status: "waiting" });
       expect(rows).toEqual([]);
     });
+
+    it("status×workflowIdの複合フィルタでAND条件が機能する", () => {
+      const rows = getExecutions(db, { status: "success", workflowId: "wf-1" });
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(1);
+    });
+
+    it("status×mode×期間の複合フィルタでAND条件が機能する", () => {
+      const rows = getExecutions(db, {
+        status: "success",
+        mode: "webhook",
+        sinceIso: "2026-07-03T00:00:00.000Z",
+        untilIso: "2026-07-04T00:00:00.000Z",
+      });
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(3);
+    });
+
+    it("status×mode×workflowId×期間の全条件同時指定で1件のみ一致する", () => {
+      const rows = getExecutions(db, {
+        status: "error",
+        mode: "manual",
+        workflowId: "wf-1",
+        sinceIso: "2026-07-01T12:00:00.000Z",
+        untilIso: "2026-07-03T00:00:00.000Z",
+      });
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(2);
+    });
+
+    it("複合フィルタでいずれか1条件でも合致しない場合は0件になる（AND連結の検証）", () => {
+      // wf-1×successの実行は存在するが、mode='webhook'とは組み合わさらない
+      const rows = getExecutions(db, {
+        status: "success",
+        mode: "webhook",
+        workflowId: "wf-1",
+      });
+
+      expect(rows).toEqual([]);
+    });
   });
 
   describe("countExecutions", () => {
