@@ -1,0 +1,29 @@
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--bg-subtle);
+  border-radius: var(--radius);
+}
+
+.label {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.value {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.delta {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
