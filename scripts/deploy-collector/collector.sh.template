@@ -1,0 +1,104 @@
+#!/bin/sh
+# collector.sh — n8n-insights-viewer 負荷収集スクリプト（方式D）
+#
+# docs/design/data-sync-design.md §3 / docs/requirements.md §5.3 準拠。
+#
+# - 標準コマンドのみで構成（cat/awk/date/stat/df/docker）。新規ソフトは導入しない
+# - n8nに一切関与しない（ホストのcronから実行され、n8nの実行記録・insightsを汚染しない）
+# - 失敗しても静かに終了する（cronメール等を発生させないため、標準出力/エラーは破棄し
+#   終了コードは常に0とする）
+# - 実行時間1秒未満・常駐なしを目標とする
+#
+# このファイルはテンプレートであり、deploy-collector CLI
+# （scripts/deploy-collector/index.ts）がプレースホルダを実値に置換してVMへ設置する。
+#   __COLLECTOR_VERSION__ : collectorのバージョン識別子（例: collector-1）
+#   __DB_PATH__            : 本番n8nのdatabase.sqliteの絶対パス
+#   __OUTPUT_FILE__        : 出力先JSONLファイルの絶対パス（追記）
+
+{
+  V="__COLLECTOR_VERSION__"
+  DB_PATH="__DB_PATH__"
+  OUT_FILE="__OUTPUT_FILE__"
+
+  TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  MEM_TOTAL=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+  MEM_AVAIL=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
+  MEM_FREE=$(awk '/^MemFree:/{print $2}' /proc/meminfo)
+  SWAP_TOTAL=$(awk '/^SwapTotal:/{print $2}' /proc/meminfo)
+  SWAP_FREE=$(awk '/^SwapFree:/{print $2}' /proc/meminfo)
+
+  LOAD_LINE=$(cat /proc/loadavg)
+  L1=$(echo "$LOAD_LINE" | awk '{print $1}')
+  L5=$(echo "$LOAD_LINE" | awk '{print $2}')
+  L15=$(echo "$LOAD_LINE" | awk '{print $3}')
+
+  DB_BYTES=$(stat -c%s "$DB_PATH" 2>/dev/null || echo 0)
+  WAL_BYTES=$(stat -c%s "$DB_PATH-wal" 2>/dev/null || echo 0)
+
+  ROOTFS_AVAIL=$(df -B1 --output=avail / 2>/dev/null | tail -n 1 | tr -d ' ')
+
+  CONTAINERS_JSON=$(docker stats --no-stream --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' 2>/dev/null | awk -F'\t' '
+    function to_bytes(s,    num, unit, mult) {
+      match(s, /^[0-9.]+/)
+      if (RSTART == 0) return 0
+      num = substr(s, RSTART, RLENGTH)
+      unit = substr(s, RSTART + RLENGTH)
+      gsub(/^[ \t]+|[ \t]+$/, "", unit)
+      unit = tolower(unit)
+      if (unit == "b") mult = 1
+      else if (unit == "kb") mult = 1000
+      else if (unit == "kib") mult = 1024
+      else if (unit == "mb") mult = 1000 * 1000
+      else if (unit == "mib") mult = 1024 * 1024
+      else if (unit == "gb") mult = 1000 * 1000 * 1000
+      else if (unit == "gib") mult = 1024 * 1024 * 1024
+      else if (unit == "tb") mult = 1000 * 1000 * 1000 * 1000
+      else if (unit == "tib") mult = 1024 * 1024 * 1024 * 1024
+      else mult = 0
+      return int(num * mult + 0.5)
+    }
+    function json_escape(s) {
+      gsub(/\\/, "\\\\", s)
+      gsub(/"/, "\\\"", s)
+      return s
+    }
+    BEGIN { out = ""; first = 1 }
+    NF >= 3 {
+      name = json_escape($1)
+      cpu = $2
+      gsub(/%/, "", cpu)
+      if (cpu !~ /^[0-9.]+$/) cpu = "0"
+      n = split($3, memparts, "/")
+      usage = (n >= 1) ? memparts[1] : "0B"
+      limit = (n >= 2) ? memparts[2] : "0B"
+      gsub(/^[ \t]+|[ \t]+$/, "", usage)
+      gsub(/^[ \t]+|[ \t]+$/, "", limit)
+      usage_bytes = to_bytes(usage)
+      limit_bytes = to_bytes(limit)
+      if (!first) out = out ","
+      out = out sprintf("{\"name\":\"%s\",\"cpu_pct\":%s,\"mem_bytes\":%d,\"mem_limit_bytes\":%d}", name, cpu, usage_bytes, limit_bytes)
+      first = 0
+    }
+    END { print out }
+  ')
+
+  # 数値項目が取得できなかった場合は0にフォールバックする（欠損で行全体を失わない）
+  MEM_TOTAL=${MEM_TOTAL:-0}
+  MEM_AVAIL=${MEM_AVAIL:-0}
+  MEM_FREE=${MEM_FREE:-0}
+  SWAP_TOTAL=${SWAP_TOTAL:-0}
+  SWAP_FREE=${SWAP_FREE:-0}
+  L1=${L1:-0}
+  L5=${L5:-0}
+  L15=${L15:-0}
+  DB_BYTES=${DB_BYTES:-0}
+  WAL_BYTES=${WAL_BYTES:-0}
+  ROOTFS_AVAIL=${ROOTFS_AVAIL:-0}
+  CONTAINERS_JSON=${CONTAINERS_JSON:-}
+
+  printf '{"v":"%s","ts":"%s","mem":{"total_kb":%s,"available_kb":%s,"free_kb":%s},"swap":{"total_kb":%s,"free_kb":%s},"load":[%s,%s,%s],"db":{"sqlite_bytes":%s,"wal_bytes":%s},"rootfs_avail_bytes":%s,"containers":[%s]}\n' \
+    "$V" "$TS" "$MEM_TOTAL" "$MEM_AVAIL" "$MEM_FREE" "$SWAP_TOTAL" "$SWAP_FREE" "$L1" "$L5" "$L15" "$DB_BYTES" "$WAL_BYTES" "$ROOTFS_AVAIL" "$CONTAINERS_JSON" >> "$OUT_FILE"
+} > /dev/null 2>&1 || true
+
+exit 0
