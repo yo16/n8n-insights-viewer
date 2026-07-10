@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# n8n-insights-viewer: 同期データ（n8n DBコピー・蓄積DB。機微データを含むためコミット禁止）
+data/
+
+# Claude Code
+tmp/
+.claude/settings.local.json
