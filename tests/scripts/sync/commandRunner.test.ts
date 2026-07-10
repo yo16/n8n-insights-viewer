@@ -1,4 +1,6 @@
 import { buildShellCommandLine, GcloudCommandRunner } from "../../../scripts/sync/commandRunner";
+import { buildCpuMetricsCommand } from "../../../scripts/sync/collectMetricsCommands";
+import type { GcloudSyncConfig } from "../../../scripts/sync/config";
 
 /**
  * commandRunner.ts の単体テスト。
@@ -43,12 +45,66 @@ describe("buildShellCommandLine", () => {
     }
   );
 
-  it("ダブルクォートを含む引数は例外を投げる", () => {
-    expect(() => buildShellCommandLine("gcloud", ['--command="echo hi"'])).toThrow();
+  it("ダブルクォートのみを含む引数（cmdメタ文字なし）は\\\"にエスケープしてクォートで囲む", () => {
+    const filter = 'metric.type="compute.googleapis.com/instance/cpu/utilization" AND resource.labels.zone="test-zone"';
+    const commandLine = buildShellCommandLine("gcloud", [`--filter=${filter}`]);
+    expect(commandLine).toBe(`gcloud "--filter=metric.type=\\"compute.googleapis.com/instance/cpu/utilization\\" AND resource.labels.zone=\\"test-zone\\""`);
   });
 
-  it("commandにダブルクォートを含む場合も例外を投げる", () => {
-    expect(() => buildShellCommandLine('gc"loud', [])).toThrow();
+  it("ダブルクォートとcmdメタ文字（&|<>^）を両方含む引数は例外を投げる", () => {
+    expect(() => buildShellCommandLine("gcloud", ['--command="echo hi" && sudo cp a b'])).toThrow();
+  });
+
+  it.each(["&", "|", "<", ">", "^"])(
+    "ダブルクォートとメタ文字 %s の組み合わせは例外を投げる",
+    (metaChar) => {
+      expect(() => buildShellCommandLine("gcloud", [`a"b${metaChar}c`])).toThrow();
+    }
+  );
+
+  it("commandにダブルクォートとcmdメタ文字を両方含む場合も例外を投げる", () => {
+    expect(() => buildShellCommandLine('gc"lo&ud', [])).toThrow();
+  });
+});
+
+/**
+ * 統合テスト: buildCpuMetricsCommand（方式C, GCP Monitoringの--filter引数）が
+ * 実際に出力する引数が buildShellCommandLine を例外なく通り、
+ * --filter内の " が \" にエスケープされることを検証する。
+ */
+describe("buildShellCommandLine × buildCpuMetricsCommand（統合）", () => {
+  it("--filter引数のダブルクォートが例外にならずエスケープされる", () => {
+    const config: GcloudSyncConfig = {
+      project: "test-project",
+      zone: "test-zone",
+      instance: "test-instance",
+      remoteDbPath: "/root/n8n/.n8n/database.sqlite",
+      remoteTmpDir: "/tmp/n8n_insights_sync",
+    };
+    const plan = buildCpuMetricsCommand(config, "2026-07-10T00:00:00Z", "2026-07-11T00:00:00Z");
+
+    expect(() => buildShellCommandLine(plan.command, plan.args)).not.toThrow();
+
+    const commandLine = buildShellCommandLine(plan.command, plan.args);
+    const filterArg = plan.args.find((arg) => arg.startsWith("--filter="));
+    expect(filterArg).toBeDefined();
+    // 元の引数内の " がすべて \" にエスケープされた状態で1つの引数として含まれる
+    const expectedEscaped = `"${filterArg!.replace(/"/g, '\\"')}"`;
+    expect(commandLine).toContain(expectedEscaped);
+  });
+
+  it("実プロセス往復: --filter風のダブルクォート入り引数がスペース・\"を保ったまま1引数として届く", async () => {
+    const runner = new GcloudCommandRunner();
+    const nodePath = process.execPath;
+    const script = "console.log(JSON.stringify(process.argv.slice(1)))";
+    const filterLikeArg =
+      '--filter=metric.type="compute.googleapis.com/instance/cpu/utilization" AND resource.labels.zone="test-zone"';
+
+    const result = await runner.run(nodePath, ["-e", script, "--", filterLikeArg]);
+
+    expect(result.exitCode).toBe(0);
+    const receivedArgs = JSON.parse(result.stdout.trim()) as string[];
+    expect(receivedArgs).toEqual([filterLikeArg]);
   });
 });
 

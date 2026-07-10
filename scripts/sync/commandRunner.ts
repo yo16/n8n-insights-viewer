@@ -37,6 +37,15 @@ function needsQuoting(arg: string): boolean {
 }
 
 /**
+ * cmd.exeのメタ文字（`&`, `|`, `<`, `>`, `^`）を含むか判定する。
+ * これらはダブルクォート内であってもcmd.exe自身が解釈する場合があり、
+ * `\"` エスケープと共存させると安全に渡せない。
+ */
+function containsCmdMetaChar(arg: string): boolean {
+  return /[&|<>^]/.test(arg);
+}
+
+/**
  * `command` と `args` から、`spawn(commandLine, { shell: true })` に渡す
  * 単一のコマンドライン文字列を組み立てる（純粋関数）。
  *
@@ -47,18 +56,30 @@ function needsQuoting(arg: string): boolean {
  * これを避けるため、空白等の特殊文字を含む引数のみを自前でダブルクォート
  * 囲みしてから単一のコマンドライン文字列にまとめる。
  *
- * @throws {Error} `command` または `args` の要素にダブルクォートが含まれる場合。
- *   cmd.exeとPOSIX shellでエスケープ方法が異なり安全に両対応できないため
- *   （現状のgcloud引数にダブルクォートは登場しない）。
+ * ダブルクォートを含む引数（例: GCP Monitoringの `--filter=metric.type="..."`）は
+ * ダブルクォートで囲んだ上で内部の `"` を `\"` にエスケープする
+ * （Windowsの子プロセスargvパーサ・POSIX shの双方で `\"` はリテラルの `"` として
+ * 解釈される標準的な規則）。
+ *
+ * @throws {Error} `command` または `args` の要素が、ダブルクォートと
+ *   cmd.exeのメタ文字（`&`, `|`, `<`, `>`, `^`）の**両方**を含む場合。
+ *   cmd.exeは `\"` を認識せずクォートの開閉状態をトグルしてしまうため、
+ *   この組み合わせは安全にエスケープできない
+ *   （現状のgcloud引数では、`--filter`は`"`のみ、`--command`は`&&`のみを含み、
+ *   両方を同時に含む引数は存在しない）。
  */
 export function buildShellCommandLine(command: string, args: string[]): string {
   const parts = [command, ...args];
   return parts
     .map((part) => {
       if (part.includes('"')) {
-        throw new Error(
-          `buildShellCommandLine: ダブルクォートを含む引数/コマンドはサポートしていません: ${part}`
-        );
+        if (containsCmdMetaChar(part)) {
+          throw new Error(
+            `buildShellCommandLine: ダブルクォートとcmdメタ文字(&|<>^)を同時に含む引数/コマンドはサポートしていません: ${part}`
+          );
+        }
+        const escaped = part.replace(/"/g, '\\"');
+        return `"${escaped}"`;
       }
       return needsQuoting(part) ? `"${part}"` : part;
     })
