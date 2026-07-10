@@ -5,9 +5,9 @@
  * （fetch→validate→extract→ingest→collect-metrics→cleanup）を順次実行し、
  * `sync_history` へ記録する。
  *
- * - extract/ingest/collect-metricsは本タスク（svo）では未実装のため、
- *   到達した時点で明示的にエラー終了する骨格のみを用意する
- *   （Beadsタスク「shu」で実装予定）
+ * - extract/ingestはBeadsタスク「shu」で実装済み
+ * - collect-metricsは未実装のため、到達した時点で明示的にエラー終了する
+ *   骨格のみを用意する（後続タスク「8k8」で実装予定）
  * - cleanupは、どのフェーズで失敗しても必ず実行する（try/finally相当。
  *   docs/design/security-design.md §3）
  */
@@ -24,6 +24,8 @@ import {
   type FetchPhaseOptions,
 } from "./phases/fetchPhase";
 import { runValidatePhase } from "./phases/validatePhase";
+import { runExtractPhase } from "./phases/extractPhase";
+import { runIngestPhase } from "./phases/ingestPhase";
 import { runNotImplementedPhase } from "./phases/notImplementedPhase";
 import { runCleanupPhase } from "./phases/cleanupPhase";
 import { emitResult, logHuman, type ResultStatus, type SyncPhase } from "./progress";
@@ -48,14 +50,15 @@ export interface SyncRunResult {
   status: ResultStatus;
   phaseReached: SyncPhase;
   errorMessage?: string;
+  rowsIngested?: Record<string, number>;
 }
 
 /**
  * 同期CLIの全フェーズを順次実行する。
  *
- * fetch/validateを実装済みフェーズとして実行し、extractフェーズで
- * 明示的に停止する（後続タスクで実装が追加されるまでの骨格）。
- * cleanupはどの段階で失敗しても必ず実行する。
+ * fetch/validate/extract/ingestを実装済みフェーズとして実行し、
+ * collect-metricsフェーズで明示的に停止する（後続タスクで実装が
+ * 追加されるまでの骨格）。cleanupはどの段階で失敗しても必ず実行する。
  */
 export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
   const fetchOptions = options.fetchOptions ?? defaultFetchPhaseOptions();
@@ -69,6 +72,7 @@ export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
   let integrityOk: boolean | undefined;
   let schemaOk: boolean | undefined;
   let errorMessage: string | undefined;
+  let rowsIngested: Record<string, number> | undefined;
   let status: ResultStatus = "success";
 
   try {
@@ -81,13 +85,11 @@ export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
     schemaOk = validateResult.schemaOk;
 
     phaseReached = "extract";
-    runNotImplementedPhase("extract");
+    const extracted = runExtractPhase(fetchOptions.localRawDbPath);
 
-    // 現状は上のrunNotImplementedPhaseで必ずthrowするため、以下は未到達。
-    // 後続タスク（shu）でextract/ingest/collect-metricsが実装された際の
-    // 到達点を示す骨格として残す。
     phaseReached = "ingest";
-    runNotImplementedPhase("ingest");
+    const ingestResult = runIngestPhase(db, extracted);
+    rowsIngested = ingestResult.rowsIngested;
 
     phaseReached = "collect-metrics";
     runNotImplementedPhase("collect-metrics");
@@ -117,15 +119,16 @@ export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
       phaseReached,
       integrityOk,
       schemaOk,
+      rowsIngested,
       errorMessage,
       rawCopyDeleted,
     });
     db.close();
 
-    emitResult(status, { error: errorMessage });
+    emitResult(status, { error: errorMessage, rowsIngested });
   }
 
-  return { status, phaseReached, errorMessage };
+  return { status, phaseReached, errorMessage, rowsIngested };
 }
 
 export type { GcloudSyncConfig };

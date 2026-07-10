@@ -53,8 +53,8 @@ CREATE TABLE execution_entity (
  * runner.ts（runSync）の結合テスト。
  *
  * 絶対厳守: FakeCommandRunnerのみを使用し、実gcloudコマンドは実行しない。
- * fetch/validateは実装済みフェーズとして実際に動かし、extractフェーズで
- * 明示的に停止する骨格であることを検証する。
+ * fetch/validate/extract/ingestは実装済みフェーズとして実際に動かし、
+ * collect-metricsフェーズで明示的に停止する骨格であることを検証する。
  */
 describe("runSync", () => {
   let tmpDir: string;
@@ -108,10 +108,25 @@ describe("runSync", () => {
   function writeValidFixtureDb(): void {
     const db = new Database(fixtureDbPath);
     db.exec(VALID_SCHEMA_DDL);
+    db.prepare(
+      "INSERT INTO insights_by_period (metaId, type, value, periodUnit, periodStart) VALUES (?, ?, ?, ?, ?)",
+    ).run(1, 2, 10, 1, "2026-07-01T00:00:00.000Z");
+    db.prepare(
+      "INSERT INTO insights_metadata (metaId, workflowId, workflowName, projectName) VALUES (?, ?, ?, ?)",
+    ).run(1, "wf1", "My Workflow", "Default");
+    db.prepare(
+      "INSERT INTO workflow_entity (id, name, active, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+    ).run("wf1", "My Workflow", 1, "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z");
+    db.prepare(
+      "INSERT INTO workflow_statistics (workflowId, name, count, latestEvent) VALUES (?, ?, ?, ?)",
+    ).run("wf1", "production_success", 5, "2026-07-01T00:00:00.000Z");
+    db.prepare(
+      "INSERT INTO execution_entity (id, workflowId, status, mode, startedAt, stoppedAt, createdAt, finished) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(100, "wf1", "success", "trigger", "2026-07-01T00:00:00.000Z", "2026-07-01T00:01:00.000Z", "2026-07-01T00:00:00.000Z", 1);
     db.close();
   }
 
-  it("fetch→validateまで成功し、extractフェーズで失敗として停止する", async () => {
+  it("fetch→ingestまで成功し、collect-metricsフェーズで失敗として停止する", async () => {
     writeValidFixtureDb();
     const runner = fakeSuccessfulFetchRunner();
 
@@ -127,8 +142,26 @@ describe("runSync", () => {
     });
 
     expect(result.status).toBe("failed");
-    expect(result.phaseReached).toBe("extract");
-    expect(result.errorMessage).toMatch(/extract/);
+    expect(result.phaseReached).toBe("collect-metrics");
+    expect(result.errorMessage).toMatch(/collect-metrics/);
+    expect(result.rowsIngested).toEqual({
+      insights_by_period: 1,
+      insights_metadata: 1,
+      workflow_entity: 1,
+      workflow_statistics: 1,
+      execution_entity: 1,
+    });
+
+    const accDb = new Database(accumulationDbPath, { readonly: true });
+    try {
+      const ingestedExecution = accDb
+        .prepare("SELECT id, ingestedAt FROM execution_entity WHERE id = 100")
+        .get() as Record<string, unknown>;
+      expect(ingestedExecution.id).toBe(100);
+      expect(ingestedExecution.ingestedAt).toEqual(expect.any(String));
+    } finally {
+      accDb.close();
+    }
   });
 
   it("cleanupフェーズが必ず実行され、生コピーが削除される", async () => {
@@ -149,7 +182,7 @@ describe("runSync", () => {
     expect(fs.existsSync(rawDbPath)).toBe(false);
   });
 
-  it("sync_historyにfailed/phase_reached=extractが記録される", async () => {
+  it("sync_historyにfailed/phase_reached=collect-metricsと取り込み件数が記録される", async () => {
     writeValidFixtureDb();
     const runner = fakeSuccessfulFetchRunner();
 
@@ -168,17 +201,90 @@ describe("runSync", () => {
     try {
       const row = db
         .prepare(
-          "SELECT status, phase_reached, integrity_ok, schema_ok, raw_copy_deleted FROM sync_history ORDER BY id DESC LIMIT 1",
+          "SELECT status, phase_reached, integrity_ok, schema_ok, raw_copy_deleted, rows_ingested_json FROM sync_history ORDER BY id DESC LIMIT 1",
         )
         .get() as Record<string, unknown>;
 
       expect(row.status).toBe("failed");
-      expect(row.phase_reached).toBe("extract");
+      expect(row.phase_reached).toBe("collect-metrics");
       expect(row.integrity_ok).toBe(1);
       expect(row.schema_ok).toBe(1);
       expect(row.raw_copy_deleted).toBe(1);
+      expect(JSON.parse(row.rows_ingested_json as string)).toEqual({
+        insights_by_period: 1,
+        insights_metadata: 1,
+        workflow_entity: 1,
+        workflow_statistics: 1,
+        execution_entity: 1,
+      });
     } finally {
       db.close();
+    }
+  });
+
+  it("2回目の同期でもUPSERTのexecution_entityは古い実行明細を消さずに蓄積される", async () => {
+    writeValidFixtureDb();
+    const runner1 = fakeSuccessfulFetchRunner();
+
+    await runSync({
+      commandRunner: runner1,
+      fetchOptions: {
+        config,
+        localRawDir: path.dirname(rawDbPath),
+        localRawDbPath: rawDbPath,
+        localRawWalPath: rawWalPath,
+      },
+      accumulationDbPath,
+    });
+
+    // 2回目の同期: 本番側でid=100はpruneされ、id=200のみが取得された想定のフィクスチャに差し替え
+    fs.rmSync(fixtureDbPath, { force: true });
+    const db2 = new Database(fixtureDbPath);
+    db2.exec(VALID_SCHEMA_DDL);
+    db2.prepare(
+      "INSERT INTO insights_by_period (metaId, type, value, periodUnit, periodStart) VALUES (?, ?, ?, ?, ?)",
+    ).run(1, 2, 10, 1, "2026-07-01T00:00:00.000Z");
+    db2.prepare(
+      "INSERT INTO insights_metadata (metaId, workflowId, workflowName, projectName) VALUES (?, ?, ?, ?)",
+    ).run(1, "wf1", "My Workflow", "Default");
+    db2.prepare(
+      "INSERT INTO workflow_entity (id, name, active, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+    ).run("wf1", "My Workflow", 1, "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z");
+    db2.prepare(
+      "INSERT INTO workflow_statistics (workflowId, name, count, latestEvent) VALUES (?, ?, ?, ?)",
+    ).run("wf1", "production_success", 6, "2026-07-02T00:00:00.000Z");
+    db2.prepare(
+      "INSERT INTO execution_entity (id, workflowId, status, mode, startedAt, stoppedAt, createdAt, finished) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(200, "wf1", "success", "trigger", "2026-07-02T00:00:00.000Z", "2026-07-02T00:01:00.000Z", "2026-07-02T00:00:00.000Z", 1);
+    db2.close();
+
+    const runner2 = fakeSuccessfulFetchRunner();
+    await runSync({
+      commandRunner: runner2,
+      fetchOptions: {
+        config,
+        localRawDir: path.dirname(rawDbPath),
+        localRawDbPath: rawDbPath,
+        localRawWalPath: rawWalPath,
+      },
+      accumulationDbPath,
+    });
+
+    const accDb = new Database(accumulationDbPath, { readonly: true });
+    try {
+      const rows = accDb
+        .prepare("SELECT id FROM execution_entity ORDER BY id")
+        .all()
+        .map((row) => (row as { id: number }).id);
+      expect(rows).toEqual([100, 200]);
+
+      // 全置換テーブルのworkflow_statisticsは最新の1件のみに置換されている
+      const stats = accDb
+        .prepare("SELECT count FROM workflow_statistics WHERE workflowId = 'wf1'")
+        .get() as { count: number };
+      expect(stats.count).toBe(6);
+    } finally {
+      accDb.close();
     }
   });
 

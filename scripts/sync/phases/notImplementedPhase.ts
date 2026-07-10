@@ -1,9 +1,9 @@
 /**
- * 未実装フェーズ（extract / ingest / collect-metrics）の骨格。
+ * 未実装フェーズ（collect-metrics）の骨格。
  *
- * これらのフェーズはBeadsタスク「shu」で実装される
- * （docs/design/data-sync-design.md §5 Phase 3-5）。
- * 本タスク（svo）では、フェーズ一覧・進捗イベント・sync_historyへの
+ * このフェーズは後続タスク「8k8」で実装される
+ * （docs/design/data-sync-design.md §5 Phase 5）。
+ * 本タスク（shu）では、フェーズ一覧・進捗イベント・sync_historyへの
  * 記録の骨格のみを用意し、到達した場合は明示的にエラー終了する。
  */
 

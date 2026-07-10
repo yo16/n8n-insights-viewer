@@ -32,8 +32,8 @@ export class ValidateError extends Error {
 }
 
 /**
- * 未実装フェーズ（extract/ingest/collect-metrics）に到達した際のエラー。
- * 後続タスク（shu）で実装が追加されるまでの骨格として使う。
+ * 未実装フェーズ（collect-metrics）に到達した際のエラー。
+ * 後続タスク（8k8）で実装が追加されるまでの骨格として使う。
  */
 export class NotImplementedPhaseError extends Error {
   constructor(public readonly phase: string) {
@@ -41,5 +41,27 @@ export class NotImplementedPhaseError extends Error {
       `[sync] フェーズ "${phase}" は未実装です（後続タスクで実装されます。docs/design/data-sync-design.md 参照）`,
     );
     this.name = "NotImplementedPhaseError";
+  }
+}
+
+/**
+ * Phase 3: extract（生コピーからのホワイトリスト抽出・zod検証）失敗時のエラー。
+ *
+ * 生コピーを開けない場合や、取り込み対象5テーブルの行がzodスキーマの検証に
+ * 失敗した場合に投げる（docs/design/data-sync-design.md §5 Phase 3）。
+ * 検証エラー時は取り込みを中断する（黙って壊れたデータを蓄積しない）。
+ */
+export class ExtractError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExtractError";
+  }
+}
+
+/** Phase 4: ingest（蓄積DBへの取り込み）失敗時のエラー。 */
+export class IngestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IngestError";
   }
 }
