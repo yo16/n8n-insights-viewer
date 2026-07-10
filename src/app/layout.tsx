@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AppShell } from "@/components/layout/AppShell";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -9,8 +10,10 @@ export const metadata: Metadata = {
 /**
  * ルートレイアウト。
  *
- * この雛形の時点ではナビゲーション等は未実装（後続タスクで
- * docs/design/frontend-design.md §2 の共通レイアウト（サイドナビ・状態バー）を追加する）。
+ * 全画面共通のシェル（サイドナビ）を `AppShell` で提供する
+ * （docs/design/frontend-design.md §2 共通レイアウト）。
+ * ヘッダの状態バッジ・最終同期表示は、データアクセス層が実装される
+ * 後続タスクで追加する。
  */
 export default function RootLayout({
   children,
@@ -19,7 +22,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja">
-      <body>{children}</body>
+      <body>
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }
