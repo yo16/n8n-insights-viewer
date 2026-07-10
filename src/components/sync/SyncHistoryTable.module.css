@@ -1,0 +1,65 @@
+.wrapper {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.table th,
+.table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table thead th {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+.errorCell {
+  white-space: normal;
+  color: var(--color-danger);
+  max-width: 32ch;
+}
+
+.statusSuccess {
+  color: var(--color-normal);
+  font-weight: 600;
+}
+
+.statusFailed {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.statusRunning {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+.statusAborted {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

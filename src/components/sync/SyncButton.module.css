@@ -1,0 +1,43 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.button {
+  appearance: none;
+  border: 1px solid var(--series-runtime);
+  background: var(--series-runtime);
+  color: #fff;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.status p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.status .success {
+  color: var(--color-normal);
+  font-weight: 600;
+}
+
+.status .error {
+  color: var(--color-danger);
+  font-weight: 600;
+}
