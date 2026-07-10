@@ -148,6 +148,21 @@ export async function runDeployCollector(
       readCrontab.command,
       readCrontab.args,
     );
+    // 「crontab未設定」と「読み取りコマンド自体の失敗」を区別する:
+    // buildReadCrontabCommand が組み立てるリモートスクリプトは
+    // `crontab -l 2>/dev/null || true` であり、crontab未設定時（`crontab -l`が
+    // 失敗する場合）でも `|| true` でexitCodeを常に0・stdoutを空文字列に
+    // 正規化している（scripts/deploy-collector/deployCommands.ts参照）。
+    // そのため、ここで exitCode !== 0 になるのは ssh 自体の失敗
+    // （ネットワーク断・認証エラー等）のみであり、
+    // 「stdoutが空 = crontab未設定」と誤認して全消しで書き戻すことを防ぐため、
+    // このケースでは書き戻しを一切行わずに中止する。
+    if (readResult.exitCode !== 0) {
+      throw new Error(
+        `既存crontabの読み取りに失敗しました（ネットワーク断・認証エラー等の可能性があり、` +
+          `安全のためcrontabの書き戻しを中止しました）: ${readResult.stderr || readResult.stdout}`,
+      );
+    }
     const newCrontabContent = mergeCrontab(
       readResult.stdout,
       deployConfig.cronLine,

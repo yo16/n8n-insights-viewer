@@ -86,6 +86,13 @@ export function buildChmodCommand(
  * 既存crontabを読み取るコマンド。
  * crontab未設定（`crontab -l` が失敗する）場合でも、`|| true` により
  * 呼び出し側は空文字列として扱える（exitCodeは常に0に丸める）。
+ *
+ * **重要**: この `|| true` は「crontab未設定」という正常系のみを吸収するためのもの。
+ * これにより、呼び出し側（deployRunner.ts）が受け取る `exitCode !== 0` は
+ * ssh自体の失敗（ネットワーク断・認証エラー等のコマンド失敗）だけを意味する
+ * ことが保証される。呼び出し側はこの契約に基づき、`exitCode !== 0` の場合は
+ * 「stdoutが空 = crontab未設定」と誤認せず、crontabの書き戻しを中止すること
+ * （既存crontabの全消しを防ぐため。docs/design/security-design.md §5参照）。
  */
 export function buildReadCrontabCommand(
   config: GcloudSyncConfig,
