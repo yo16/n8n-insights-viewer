@@ -1,0 +1,29 @@
+.trend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+}
+
+.label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.value {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.direction {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+}
+
+.reference {
+  font-size: var(--fs-xs);
+  color: var(--text-disabled);
+}
