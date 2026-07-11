@@ -128,31 +128,48 @@ export function buildScpCollectorFileCommand(
 }
 
 /**
- * 方式C: GCP MonitoringからCPU使用率の時系列を取得するコマンド。
+ * 方式C: Cloud Monitoring REST APIでCPU使用率の時系列を取得するための
+ * アクセストークン取得コマンド。
  *
- * `gcloud monitoring time-series list` を使用（読み取りのみ）。
- * インスタンス単体のみが対象のプロジェクトのため、zoneでの絞り込みのみを行う
- * （**独自判断**: instance_idの解決に追加のgcloud呼び出しが必要になり複雑化するため、
- * 対象プロジェクトに本インスタンス1台のみが存在する前提を利用して省略した）。
+ * `gcloud monitoring time-series list` というサブコマンドは実在しない
+ * （gcloudのmonitoringグループにあるのは dashboards/policies/snoozes/uptime のみ）。
+ * そのため、Cloud Monitoring REST API（`timeSeries.list`）をHTTPで直接呼び出す方式に
+ * 変更した。認証には `gcloud auth print-access-token`（読み取り専用・
+ * 既存アカウントのアクセストークンを標準出力へ表示するのみ）を使う。
  */
-export function buildCpuMetricsCommand(
+export function buildAccessTokenCommand(): PlannedCommand {
+  return {
+    description: "Cloud Monitoring REST API呼び出し用のアクセストークンを取得",
+    command: "gcloud",
+    args: ["auth", "print-access-token"],
+  };
+}
+
+/**
+ * 方式C: Cloud Monitoring REST API（`timeSeries.list`）のリクエストURLを組み立てる
+ * （純粋関数。fetch実行は行わない）。
+ *
+ * インスタンス単体のみが対象のプロジェクトのため、zoneでの絞り込みのみを行う
+ * （**独自判断**: instance_idの解決に追加のAPI呼び出しが必要になり複雑化するため、
+ * 対象プロジェクトに本インスタンス1台のみが存在する前提を利用して省略した）。
+ *
+ * @param pageToken 前ページのレスポンスに含まれる `nextPageToken`（あれば指定してページネーションする）
+ */
+export function buildCpuMetricsRequestUrl(
   config: GcloudSyncConfig,
   intervalStartTimeIso: string,
   intervalEndTimeIso: string,
-): PlannedCommand {
+  pageToken?: string,
+): string {
   const filter = `metric.type="compute.googleapis.com/instance/cpu/utilization" AND resource.labels.zone="${config.zone}"`;
-  return {
-    description: "GCP MonitoringからCPU使用率の時系列を取得",
-    command: "gcloud",
-    args: [
-      "monitoring",
-      "time-series",
-      "list",
-      `--project=${config.project}`,
-      `--filter=${filter}`,
-      `--interval-start-time=${intervalStartTimeIso}`,
-      `--interval-end-time=${intervalEndTimeIso}`,
-      "--format=json",
-    ],
-  };
+  const params = new URLSearchParams();
+  params.set("filter", filter);
+  params.set("interval.startTime", intervalStartTimeIso);
+  params.set("interval.endTime", intervalEndTimeIso);
+  if (pageToken) {
+    params.set("pageToken", pageToken);
+  }
+  return `https://monitoring.googleapis.com/v3/projects/${encodeURIComponent(
+    config.project,
+  )}/timeSeries?${params.toString()}`;
 }

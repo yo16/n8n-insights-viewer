@@ -11,7 +11,8 @@
  * 3. cronファイル回収（方式D）: collector出力ファイルをscpで取得できれば取り込む
  *    （**ファイルが無ければスキップ=正常**。設置は別タスク「aqh」の担当のため、
  *    本タスクの時点では未設置が通常状態）
- * 4. GCP Monitoring CPU回収（方式C）: `gcloud monitoring time-series list` で取得 →
+ * 4. GCP Monitoring CPU回収（方式C）: `gcloud auth print-access-token` でトークンを取得後、
+ *    Cloud Monitoring REST API（`timeSeries.list`）をfetchで呼び出して取得 →
  *    cpu_metrics へUPSERT
  *
  * **失敗ポリシー（docs/design/data-sync-design.md §5 Phase 5 準拠）**:
@@ -26,14 +27,12 @@ import type Database from "better-sqlite3";
 
 import type { CommandRunner } from "../commandRunner";
 import {
-  buildCpuMetricsCommand,
   buildOomLogCommand,
   buildScpCollectorFileCommand,
   buildSpotMetricsCommand,
 } from "../collectMetricsCommands";
 import {
   parseCollectorJsonl,
-  parseCpuMetricsJson,
   parseOomLogOutput,
   parseSpotOutput,
 } from "../collectMetricsParsers";
@@ -44,6 +43,7 @@ import {
   upsertOomEvents,
 } from "../collectMetricsUpsert";
 import type { CollectMetricsConfig, GcloudSyncConfig } from "../config";
+import { fetchCpuMetricsViaRestApi, type FetchLike } from "../cpuMetricsFetcher";
 import { emitPhaseDone, emitPhaseProgress, emitPhaseStart } from "../progress";
 
 /** collect-metricsフェーズの実行オプション。 */
@@ -51,6 +51,11 @@ export interface CollectMetricsPhaseOptions {
   runner: CommandRunner;
   gcloudConfig: GcloudSyncConfig;
   collectMetricsConfig: CollectMetricsConfig;
+  /**
+   * 方式C（Cloud Monitoring REST API呼び出し）に使う`fetch`互換関数。
+   * テストで実HTTPを叩かないよう注入可能にしている。省略時は `globalThis.fetch`。
+   */
+  fetchFn?: FetchLike;
 }
 
 /** collect-metricsフェーズの結果。フェーズ自体は例外を投げない。 */
@@ -274,6 +279,9 @@ async function collectCronFile(
  * 4. GCP Monitoring CPU回収（方式C）を実行し、cpu_metricsへUPSERTする。
  * 開始時刻は既存の `cpu_metrics` の最新時刻の直後、無ければ
  * `cpuMetricsLookbackDays` 遡った時刻とする。失敗時は例外を投げず `warnings` へ追記する。
+ *
+ * アクセストークン取得（gcloud）とREST API呼び出し（fetch）は
+ * `cpuMetricsFetcher.ts` に委譲する（テストではCommandRunner/fetchの両方をモックする）。
  */
 async function collectCpuMetrics(
   db: Database.Database,
@@ -301,17 +309,14 @@ async function collectCpuMetrics(
       return;
     }
 
-    const plan = buildCpuMetricsCommand(
-      options.gcloudConfig,
-      startTime.toISOString(),
-      endTime.toISOString(),
-    );
-    const result = await options.runner.run(plan.command, plan.args);
-    if (result.exitCode !== 0) {
-      throw new Error(result.stderr || result.stdout || "unknown error");
-    }
+    const points = await fetchCpuMetricsViaRestApi({
+      runner: options.runner,
+      gcloudConfig: options.gcloudConfig,
+      intervalStartTimeIso: startTime.toISOString(),
+      intervalEndTimeIso: endTime.toISOString(),
+      fetchFn: options.fetchFn,
+    });
 
-    const points = parseCpuMetricsJson(result.stdout);
     upsertCpuMetrics(
       db,
       points.map((p) => ({ tsUtc: p.tsUtc, cpuUtil: p.cpuUtil })),

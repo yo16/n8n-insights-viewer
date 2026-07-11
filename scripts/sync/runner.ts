@@ -30,6 +30,7 @@ import { runValidatePhase } from "./phases/validatePhase";
 import { runExtractPhase } from "./phases/extractPhase";
 import { runIngestPhase } from "./phases/ingestPhase";
 import { runCollectMetricsPhase } from "./phases/collectMetricsPhase";
+import type { FetchLike } from "./cpuMetricsFetcher";
 import { runCleanupPhase } from "./phases/cleanupPhase";
 import { emitResult, logHuman, type ResultStatus, type SyncPhase } from "./progress";
 import {
@@ -48,6 +49,12 @@ export interface RunSyncOptions {
   collectMetricsConfig?: CollectMetricsConfig;
   /** 蓄積DBのパス。省略時は既定値（`data/n8n_insights.sqlite`）。 */
   accumulationDbPath?: string;
+  /**
+   * collect-metricsフェーズの方式C（Cloud Monitoring REST API）呼び出しに使う
+   * `fetch`互換関数。テストで実HTTPを叩かないよう注入可能にしている。
+   * 省略時は `globalThis.fetch`。
+   */
+  fetchFn?: FetchLike;
 }
 
 /** 同期全体の実行結果。 */
@@ -107,6 +114,7 @@ export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
       runner: options.commandRunner,
       gcloudConfig: fetchOptions.config,
       collectMetricsConfig,
+      fetchFn: options.fetchFn,
     });
     collectorVersionSeen = collectMetricsResult.collectorVersionSeen;
     if (collectMetricsResult.warnings.length > 0) {

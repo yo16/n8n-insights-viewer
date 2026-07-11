@@ -1,6 +1,4 @@
 import { buildShellCommandLine, GcloudCommandRunner } from "../../../scripts/sync/commandRunner";
-import { buildCpuMetricsCommand } from "../../../scripts/sync/collectMetricsCommands";
-import type { GcloudSyncConfig } from "../../../scripts/sync/config";
 
 /**
  * commandRunner.ts の単体テスト。
@@ -68,31 +66,17 @@ describe("buildShellCommandLine", () => {
 });
 
 /**
- * 統合テスト: buildCpuMetricsCommand（方式C, GCP Monitoringの--filter引数）が
- * 実際に出力する引数が buildShellCommandLine を例外なく通り、
- * --filter内の " が \" にエスケープされることを検証する。
+ * 実プロセス往復テスト: ダブルクォートを含む引数（他のgcloudサブコマンドの
+ * `--filter` 等で今後も使われうる形）が、スペース・`"` を保ったまま
+ * 1つの引数として子プロセスに届くことを確認する。
+ *
+ * 方式C（CPU使用率取得）自体は現在Cloud Monitoring REST APIをfetchで直接呼ぶ方式に
+ * 変更されており、`--filter` を含むgcloudコマンドは組み立てていない
+ * （`gcloud monitoring time-series list` は実在しないサブコマンドだったため）。
+ * `buildShellCommandLine` 自体の引用符エスケープ機能は他のコマンドでも使われるため、
+ * このテストは汎用的な確認として残す。
  */
-describe("buildShellCommandLine × buildCpuMetricsCommand（統合）", () => {
-  it("--filter引数のダブルクォートが例外にならずエスケープされる", () => {
-    const config: GcloudSyncConfig = {
-      project: "test-project",
-      zone: "test-zone",
-      instance: "test-instance",
-      remoteDbPath: "/root/n8n/.n8n/database.sqlite",
-      remoteTmpDir: "/tmp/n8n_insights_sync",
-    };
-    const plan = buildCpuMetricsCommand(config, "2026-07-10T00:00:00Z", "2026-07-11T00:00:00Z");
-
-    expect(() => buildShellCommandLine(plan.command, plan.args)).not.toThrow();
-
-    const commandLine = buildShellCommandLine(plan.command, plan.args);
-    const filterArg = plan.args.find((arg) => arg.startsWith("--filter="));
-    expect(filterArg).toBeDefined();
-    // 元の引数内の " がすべて \" にエスケープされた状態で1つの引数として含まれる
-    const expectedEscaped = `"${filterArg!.replace(/"/g, '\\"')}"`;
-    expect(commandLine).toContain(expectedEscaped);
-  });
-
+describe("buildShellCommandLine（ダブルクォート入り引数の実プロセス往復）", () => {
   it("実プロセス往復: --filter風のダブルクォート入り引数がスペース・\"を保ったまま1引数として届く", async () => {
     const runner = new GcloudCommandRunner();
     const nodePath = process.execPath;

@@ -1,5 +1,6 @@
 import {
-  buildCpuMetricsCommand,
+  buildAccessTokenCommand,
+  buildCpuMetricsRequestUrl,
   buildOomLogCommand,
   buildScpCollectorFileCommand,
   buildSpotMetricsCommand,
@@ -101,26 +102,59 @@ describe("collectMetricsCommands", () => {
     });
   });
 
-  describe("buildCpuMetricsCommand", () => {
-    it("gcloud monitoring time-series list を読み取り専用で組み立てる", () => {
-      const plan = buildCpuMetricsCommand(
+  describe("buildAccessTokenCommand", () => {
+    it("gcloud auth print-access-token を読み取り専用で組み立てる", () => {
+      const plan = buildAccessTokenCommand();
+      expect(plan.command).toBe("gcloud");
+      expect(plan.args).toEqual(["auth", "print-access-token"]);
+      // 書き込み系フラグ（create/delete等）を含まないこと
+      expect(plan.args.join(" ")).not.toMatch(/\b(create|delete|update)\b/);
+    });
+  });
+
+  describe("buildCpuMetricsRequestUrl", () => {
+    it("Cloud Monitoring REST API(timeSeries.list)のURLを組み立てる", () => {
+      const url = buildCpuMetricsRequestUrl(
         config,
         "2026-07-01T00:00:00.000Z",
         "2026-07-10T00:00:00.000Z",
       );
-      expect(plan.command).toBe("gcloud");
-      expect(plan.args).toEqual(
-        expect.arrayContaining(["monitoring", "time-series", "list"]),
+      const parsed = new URL(url);
+
+      expect(parsed.origin).toBe("https://monitoring.googleapis.com");
+      expect(parsed.pathname).toBe("/v3/projects/test-project/timeSeries");
+      expect(parsed.searchParams.get("filter")).toBe(
+        'metric.type="compute.googleapis.com/instance/cpu/utilization" AND resource.labels.zone="test-zone"',
       );
-      expect(
-        plan.args.some((a) => a.startsWith("--interval-start-time=")),
-      ).toBe(true);
-      expect(plan.args.some((a) => a.startsWith("--interval-end-time="))).toBe(
-        true,
+      expect(parsed.searchParams.get("interval.startTime")).toBe(
+        "2026-07-01T00:00:00.000Z",
       );
-      expect(plan.args).toContain("--format=json");
-      // 書き込み系フラグ（create/delete等）を含まないこと
-      expect(plan.args.join(" ")).not.toMatch(/\b(create|delete|update)\b/);
+      expect(parsed.searchParams.get("interval.endTime")).toBe(
+        "2026-07-10T00:00:00.000Z",
+      );
+      expect(parsed.searchParams.has("pageToken")).toBe(false);
+    });
+
+    it("filterに含まれるダブルクォート・空白・&等をURLエンコードする", () => {
+      const url = buildCpuMetricsRequestUrl(
+        config,
+        "2026-07-01T00:00:00.000Z",
+        "2026-07-10T00:00:00.000Z",
+      );
+      // URLとして生の " " や "&"(パラメータ区切り以外)がそのまま残っていないこと
+      expect(url).not.toMatch(/filter=.*\s/);
+      expect(url).toContain("filter=metric.type%3D%22compute");
+    });
+
+    it("pageTokenを指定するとクエリパラメータに追加される", () => {
+      const url = buildCpuMetricsRequestUrl(
+        config,
+        "2026-07-01T00:00:00.000Z",
+        "2026-07-10T00:00:00.000Z",
+        "next-page-token-abc",
+      );
+      const parsed = new URL(url);
+      expect(parsed.searchParams.get("pageToken")).toBe("next-page-token-abc");
     });
   });
 });

@@ -1,3 +1,10 @@
+/**
+ * @jest-environment node
+ *
+ * collect-metricsフェーズ（方式C）がデフォルトの `globalThis.fetch` を使う経路を
+ * 通るため、`fetch` が存在するNode環境で実行する（jsdom環境にはグローバル`fetch`が
+ * 無いため）。
+ */
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -102,7 +109,25 @@ describe("runSync", () => {
       }, // scp db (fixtureDbPathの内容をコピーする副作用)
       { stdout: "", stderr: "", exitCode: 0 }, // scp wal
       { stdout: "", stderr: "", exitCode: 0 }, // cleanup remote tmp
+      { stdout: "", stderr: "", exitCode: 0 }, // collect-metrics: スポット収集
+      { stdout: "", stderr: "", exitCode: 0 }, // collect-metrics: OOMログ回収
+      { stdout: "", stderr: "", exitCode: 0 }, // collect-metrics: cronファイル(scp、未設置扱い)
+      { stdout: "fake-access-token\n", stderr: "", exitCode: 0 }, // collect-metrics: CPUアクセストークン取得
     ]);
+  }
+
+  /**
+   * collect-metricsフェーズの方式C（Cloud Monitoring REST API）呼び出しに使う
+   * フェイクfetch関数。実HTTPは一切行わず、空の`timeSeries`を返す固定応答とする
+   * （本テストファイルの関心事はfetch/validate/extract/ingest/cleanupの骨格であり、
+   * CPU使用率の中身自体はcollectMetricsPhase.test.ts / cpuMetricsFetcher.test.ts で検証済み）。
+   */
+  function fakeCpuMetricsFetchFn(): jest.Mock {
+    return jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ timeSeries: [] }),
+    } as Response);
   }
 
   function writeValidFixtureDb(): void {
@@ -139,6 +164,7 @@ describe("runSync", () => {
         localRawWalPath: rawWalPath,
       },
       accumulationDbPath,
+      fetchFn: fakeCpuMetricsFetchFn(),
     });
 
     expect(result.status).toBe("success");
@@ -191,6 +217,7 @@ describe("runSync", () => {
         localRawWalPath: rawWalPath,
       },
       accumulationDbPath,
+      fetchFn: fakeCpuMetricsFetchFn(),
     });
 
     // ①result.statusはsuccessのまま
@@ -230,6 +257,7 @@ describe("runSync", () => {
         localRawWalPath: rawWalPath,
       },
       accumulationDbPath,
+      fetchFn: fakeCpuMetricsFetchFn(),
     });
 
     expect(fs.existsSync(rawDbPath)).toBe(false);
@@ -248,6 +276,7 @@ describe("runSync", () => {
         localRawWalPath: rawWalPath,
       },
       accumulationDbPath,
+      fetchFn: fakeCpuMetricsFetchFn(),
     });
 
     const db = new Database(accumulationDbPath, { readonly: true });
@@ -288,6 +317,7 @@ describe("runSync", () => {
         localRawWalPath: rawWalPath,
       },
       accumulationDbPath,
+      fetchFn: fakeCpuMetricsFetchFn(),
     });
 
     // 2回目の同期: 本番側でid=100はpruneされ、id=200のみが取得された想定のフィクスチャに差し替え
@@ -321,6 +351,7 @@ describe("runSync", () => {
         localRawWalPath: rawWalPath,
       },
       accumulationDbPath,
+      fetchFn: fakeCpuMetricsFetchFn(),
     });
 
     const accDb = new Database(accumulationDbPath, { readonly: true });
@@ -358,6 +389,7 @@ describe("runSync", () => {
         localRawWalPath: rawWalPath,
       },
       accumulationDbPath,
+      fetchFn: fakeCpuMetricsFetchFn(),
     });
 
     expect(result.status).toBe("failed");
@@ -400,6 +432,7 @@ describe("runSync", () => {
         localRawWalPath: rawWalPath,
       },
       accumulationDbPath,
+      fetchFn: fakeCpuMetricsFetchFn(),
     });
 
     expect(result.status).toBe("failed");

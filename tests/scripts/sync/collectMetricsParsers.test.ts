@@ -1,7 +1,7 @@
 import {
   parseCollectorJsonl,
   parseCollectorJsonlLine,
-  parseCpuMetricsJson,
+  parseCpuMetricsRestPage,
   parseDockerStats,
   parseLoadavg,
   parseMeminfo,
@@ -240,67 +240,104 @@ describe("parseCollectorJsonlLine / parseCollectorJsonl", () => {
   });
 });
 
-describe("parseCpuMetricsJson", () => {
-  it("gcloud monitoring time-series list --format=json の現実的な出力をパースする", () => {
-    const json = JSON.stringify([
-      {
-        metric: { type: "compute.googleapis.com/instance/cpu/utilization" },
-        points: [
-          {
-            interval: {
-              startTime: "2026-07-10T04:00:00Z",
-              endTime: "2026-07-10T04:00:00Z",
-            },
-            value: { doubleValue: 0.032 },
+describe("parseCpuMetricsRestPage", () => {
+  it("Cloud Monitoring REST API(timeSeries.list)の現実的なレスポンスをパースする", () => {
+    const json = JSON.stringify({
+      timeSeries: [
+        {
+          metric: { type: "compute.googleapis.com/instance/cpu/utilization" },
+          resource: {
+            type: "gce_instance",
+            labels: { zone: "us-central1-c" },
           },
-          {
-            interval: {
-              startTime: "2026-07-10T05:00:00Z",
-              endTime: "2026-07-10T05:00:00Z",
+          points: [
+            {
+              interval: {
+                startTime: "2026-07-10T04:00:00Z",
+                endTime: "2026-07-10T04:00:00Z",
+              },
+              value: { doubleValue: 0.032 },
             },
-            value: { doubleValue: 0.045 },
-          },
-        ],
-      },
-    ]);
+            {
+              interval: {
+                startTime: "2026-07-10T05:00:00Z",
+                endTime: "2026-07-10T05:00:00Z",
+              },
+              value: { doubleValue: 0.045 },
+            },
+          ],
+        },
+      ],
+    });
 
-    const points = parseCpuMetricsJson(json);
-    expect(points).toEqual([
+    const result = parseCpuMetricsRestPage(json);
+    expect(result.points).toEqual([
       { tsUtc: "2026-07-10T04:00:00.000Z", cpuUtil: 0.032 },
       { tsUtc: "2026-07-10T05:00:00.000Z", cpuUtil: 0.045 },
     ]);
+    expect(result.nextPageToken).toBeUndefined();
+  });
+
+  it("nextPageTokenを含むレスポンスから次ページトークンを取り出す", () => {
+    const json = JSON.stringify({
+      timeSeries: [
+        {
+          points: [
+            {
+              interval: { endTime: "2026-07-10T04:00:00Z" },
+              value: { doubleValue: 0.01 },
+            },
+          ],
+        },
+      ],
+      nextPageToken: "abc123",
+    });
+
+    const result = parseCpuMetricsRestPage(json);
+    expect(result.points).toHaveLength(1);
+    expect(result.nextPageToken).toBe("abc123");
   });
 
   it("空・不正なJSON・想定外の構造は空配列にする(例外を投げない)", () => {
-    expect(parseCpuMetricsJson("")).toEqual([]);
-    expect(parseCpuMetricsJson("not json")).toEqual([]);
-    expect(parseCpuMetricsJson("{}")).toEqual([]);
-    expect(parseCpuMetricsJson("[{}]")).toEqual([]);
+    expect(parseCpuMetricsRestPage("")).toEqual({ points: [] });
+    expect(parseCpuMetricsRestPage("not json")).toEqual({ points: [] });
+    expect(parseCpuMetricsRestPage("{}")).toEqual({
+      points: [],
+      nextPageToken: undefined,
+    });
+    expect(parseCpuMetricsRestPage(JSON.stringify({ timeSeries: [{}] }))).toEqual({
+      points: [],
+      nextPageToken: undefined,
+    });
     expect(
-      parseCpuMetricsJson(JSON.stringify([{ points: [{ interval: {}, value: {} }] }])),
-    ).toEqual([]);
+      parseCpuMetricsRestPage(
+        JSON.stringify({ timeSeries: [{ points: [{ interval: {}, value: {} }] }] }),
+      ),
+    ).toEqual({ points: [], nextPageToken: undefined });
   });
 
   it("同一tsの重複エントリは後勝ちで1件に統合される", () => {
-    const json = JSON.stringify([
-      {
-        points: [
-          {
-            interval: { endTime: "2026-07-10T04:00:00Z" },
-            value: { doubleValue: 0.01 },
-          },
-        ],
-      },
-      {
-        points: [
-          {
-            interval: { endTime: "2026-07-10T04:00:00Z" },
-            value: { doubleValue: 0.02 },
-          },
-        ],
-      },
-    ]);
-    expect(parseCpuMetricsJson(json)).toEqual([
+    const json = JSON.stringify({
+      timeSeries: [
+        {
+          points: [
+            {
+              interval: { endTime: "2026-07-10T04:00:00Z" },
+              value: { doubleValue: 0.01 },
+            },
+          ],
+        },
+        {
+          points: [
+            {
+              interval: { endTime: "2026-07-10T04:00:00Z" },
+              value: { doubleValue: 0.02 },
+            },
+          ],
+        },
+      ],
+    });
+    expect(parseCpuMetricsRestPage(json).points).toEqual([
       { tsUtc: "2026-07-10T04:00:00.000Z", cpuUtil: 0.02 },
     ]);
   });

@@ -238,8 +238,22 @@ better-sqlite3でread-onlyに開き、行を取得（この段階ではまだ蓄
    （`UNIQUE(ts_utc,source)` により再回収でも重複しない）
 3. **OOMイベント回収**: 永続ログ `journalctl -k`（無ければ `/var/log/kern.log*`）から
    OOM行を抽出 → `oom_events` へUPSERT（再起動をまたいだOOMも取れる。[要件 §5.1](../requirements.md)）
-4. **CPU使用率（方式C）**: GCP Monitoring APIから前回同期以降のCPU使用率を取得 →
-   `cpu_metrics` へUPSERT（過去6週間まで遡れる）
+4. **CPU使用率（方式C）**: Cloud Monitoring REST API（`timeSeries.list`）から前回同期以降の
+   CPU使用率を取得 → `cpu_metrics` へUPSERT（過去6週間まで遡れる）。
+   **2026-07-11修正**: 当初 `gcloud monitoring time-series list` を想定していたが、
+   このサブコマンドはgcloud CLIに実在しない（`gcloud monitoring` グループにあるのは
+   dashboards/policies/snoozes/uptimeのみ）ため実運用で `Invalid choice: 'time-series'` エラーとなり、
+   Cloud Monitoring REST APIを直接HTTP呼び出しする方式に変更した:
+   1. `gcloud auth print-access-token`（`scripts/sync/commandRunner.ts` の `CommandRunner` 経由・
+      読み取り専用でトークンを標準出力へ表示するのみ）でアクセストークンを取得
+   2. Node組み込みの `fetch`（`scripts/sync/cpuMetricsFetcher.ts`）で
+      `GET https://monitoring.googleapis.com/v3/projects/{project}/timeSeries` を呼び出す。
+      `filter`（`metric.type="compute.googleapis.com/instance/cpu/utilization" AND resource.labels.zone="..."`）・
+      `interval.startTime`・`interval.endTime` を `URLSearchParams` でURLエンコードして渡す
+   3. `nextPageToken` が返る限りページネーションして全ページ分を統合する（安全弁として最大100ページ）
+   4. アクセストークン取得失敗・HTTPエラー（非2xx）・タイムアウト（`AbortSignal.timeout`、既定15秒）は
+      いずれも例外として投げ、呼び出し側（`collectMetricsPhase.ts`）が警告として吸収する
+      （方式Cの失敗ポリシーは変更なし。下記参照）
 
 **失敗時**: メトリクス回収の失敗は**同期全体を失敗させない**（DB取り込みは成功しているため）。
 個別の失敗を `sync_history.error_message` に警告として残し、statusは `success`（メトリクス欠測は許容。
@@ -271,14 +285,18 @@ cmd.exe側で再分解され、gcloudに渡る前に壊れる。これを避け�
 （純粋関数）で空白等の特殊文字を含む引数のみを自前でダブルクォート囲みし、**単一のコマンドライン文字列**を
 組み立ててから `spawn(commandLine, { shell: true })` する（引数配列は渡さない）。
 
-ダブルクォートを含む引数（例: GCP Monitoringの `--filter=metric.type="compute.googleapis.com/..."`.
-方式C・CPU使用率収集で使用）も存在するため、`"` は例外throwの対象にはしない。
-ダブルクォートで囲んだ上で内部の `"` を `\"` にエスケープする（Windowsの子プロセスargvパーサ・
-POSIX shの双方で `\"` はリテラルの `"` として解釈される標準規則）。ただし cmd.exe 自体は
+ダブルクォートを含む引数（例: `--command="mkdir -p '...' && ..."` 内で二重引用符を使うケースや、
+将来ダブルクォート付き `--filter` 等のgcloud引数を渡すケース）も存在しうるため、`"` は例外throwの
+対象にはしない。ダブルクォートで囲んだ上で内部の `"` を `\"` にエスケープする（Windowsの子プロセス
+argvパーサ・POSIX shの双方で `\"` はリテラルの `"` として解釈される標準規則）。ただし cmd.exe 自体は
 `\"` を認識せずクォートの開閉状態をトグルしてしまうため、**ダブルクォートと cmd.exe のメタ文字
 （`&` `|` `<` `>` `^`）を両方含む引数は安全に渡せない**。この組み合わせのみ例外を投げる
-（現状のgcloud引数では `--filter` は `"` のみ、`--command` は `&&` のみを含み、両方を同時に
-含む引数は存在しない）。
+（現状のgcloud引数では `--command` は `&&` のみを含み、両方を同時に含む引数は存在しない）。
+
+**2026-07-11修正**: 方式C（CPU使用率収集）の `--filter` は、gcloud CLI経由ではなく
+Cloud Monitoring REST APIへのHTTPリクエストのクエリパラメータとして直接 `URLSearchParams` で
+URLエンコードするようになったため、`buildShellCommandLine` を経由しなくなった
+（詳細は「4.5 Phase 5: collect-metrics」参照）。
 
 ---
 

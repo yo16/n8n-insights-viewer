@@ -349,27 +349,49 @@ export interface ParsedCpuMetricPoint {
   cpuUtil: number;
 }
 
+/** Cloud Monitoring REST API（`timeSeries.list`）1ページ分のパース結果。 */
+export interface ParsedCpuMetricsPage {
+  points: ParsedCpuMetricPoint[];
+  /** 次ページが存在する場合のトークン（呼び出し側がページネーションに使う）。 */
+  nextPageToken?: string;
+}
+
 /**
- * `gcloud monitoring time-series list --format=json` の出力をパースする。
+ * Cloud Monitoring REST API（`timeSeries.list`）の1ページ分のレスポンスボディ
+ * （JSON文字列）をパースする。
  * 想定外の構造・欠損フィールドを持つエントリはスキップする
  * （方式C取得失敗は警告のみで同期全体を失敗させない設計に合わせる）。
+ *
+ * レスポンス形式（REST）:
+ * `{ timeSeries?: [{ points: [{ interval: { endTime }, value: { doubleValue } }] }], nextPageToken?: string }`
  */
-export function parseCpuMetricsJson(text: string): ParsedCpuMetricPoint[] {
+export function parseCpuMetricsRestPage(text: string): ParsedCpuMetricsPage {
   const trimmed = text.trim();
-  if (!trimmed) return [];
+  if (!trimmed) return { points: [] };
 
   let json: unknown;
   try {
     json = JSON.parse(trimmed);
   } catch {
-    return [];
+    return { points: [] };
   }
 
-  if (!Array.isArray(json)) return [];
+  if (typeof json !== "object" || json === null) return { points: [] };
+
+  const timeSeriesList = (json as { timeSeries?: unknown }).timeSeries;
+  const nextPageTokenRaw = (json as { nextPageToken?: unknown }).nextPageToken;
+  const nextPageToken =
+    typeof nextPageTokenRaw === "string" && nextPageTokenRaw.length > 0
+      ? nextPageTokenRaw
+      : undefined;
+
+  if (!Array.isArray(timeSeriesList)) {
+    return { points: [], nextPageToken };
+  }
 
   const pointsByTs = new Map<string, number>();
 
-  for (const timeSeries of json) {
+  for (const timeSeries of timeSeriesList) {
     if (typeof timeSeries !== "object" || timeSeries === null) continue;
     const points = (timeSeries as { points?: unknown }).points;
     if (!Array.isArray(points)) continue;
@@ -394,7 +416,9 @@ export function parseCpuMetricsJson(text: string): ParsedCpuMetricPoint[] {
     }
   }
 
-  return Array.from(pointsByTs.entries())
+  const points = Array.from(pointsByTs.entries())
     .map(([tsUtc, cpuUtil]) => ({ tsUtc, cpuUtil }))
     .sort((a, b) => a.tsUtc.localeCompare(b.tsUtc));
+
+  return { points, nextPageToken };
 }
